@@ -1,0 +1,26 @@
+{
+  "name": "toi18n",
+  "version": "1.0.0",
+  "description": "Vue 3 国际化自动扫描脚本，将硬编码中文替换为 $t() 调用，支持 AI 翻译",
+  "type": "module",
+  "scripts": {
+    "i18n:scan": "node scripts/i18n-scan/index.cjs --scan",
+    "i18n:dry": "node scripts/i18n-scan/index.cjs --dry-run",
+    "i18n:gap": "node scripts/i18n-scan/index.cjs --gap",
+    "i18n:translate": "node scripts/i18n-scan/index.cjs --translate",
+    "i18n:init": "node scripts/i18n-scan/index.cjs --init",
+    "i18n:all": "node scripts/i18n-scan/index.cjs --all",
+    "i18n:setup": "node scripts/i18n-scan/index.cjs",
+    "build": "node scripts/i18n-scan/build.cjs"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.24.0",
+    "@babel/traverse": "^7.24.0",
+    "@vue/compiler-dom": "^3.4.0",
+    "@vue/compiler-sfc": "^3.4.0",
+    "fast-glob": "^3.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}
