@@ -57,6 +57,9 @@ function parseScript(code, ignoreMethods, scriptStartLine) {
       // 跳过 TS 类型注解
       if (path.parent.type === 'TSLiteralType') return
 
+      // 跳过三元运算符中的中文文本
+      if (isInConditionalExpression(path)) return
+
       const line = path.node.loc
         ? path.node.loc.start.line + scriptStartLine
         : scriptStartLine
@@ -74,6 +77,9 @@ function parseScript(code, ignoreMethods, scriptStartLine) {
      * 含变量插值的归类为「特殊-未处理」
      */
     TemplateLiteral(path) {
+      // 跳过三元运算符中的模板字符串
+      if (isInConditionalExpression(path)) return
+
       const quasis = path.node.quasis || []
       const hasInterpolation =
         path.node.expressions && path.node.expressions.length > 0
@@ -114,6 +120,9 @@ function parseScript(code, ignoreMethods, scriptStartLine) {
      */
     BinaryExpression(path) {
       if (path.node.operator !== '+') return
+
+      // 跳过三元运算符中的字符串拼接
+      if (isInConditionalExpression(path)) return
 
       const left = path.node.left
       const right = path.node.right
@@ -204,6 +213,18 @@ function isIgnoredMethodArg(path, ignoreMethods) {
     }
   }
 
+  return false
+}
+
+/**
+ * 判断节点是否在三元运算符中
+ */
+function isInConditionalExpression(path) {
+  let current = path.parentPath
+  while (current) {
+    if (current.node.type === 'ConditionalExpression') return true
+    current = current.parentPath
+  }
   return false
 }
 
