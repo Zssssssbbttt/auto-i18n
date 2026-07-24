@@ -106,6 +106,7 @@ function parseScript(code, translateMethods, scriptStartLine) {
           })
         } else {
           // 不含插值 → 正常处理
+          if (isMemberAssignmentTarget(path)) return
           if (isInCallExpression(path) && !isTranslatableMethodArg(path, translateMethods)) return
           results.push({
             line,
