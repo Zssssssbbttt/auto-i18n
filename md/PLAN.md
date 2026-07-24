@@ -44,7 +44,7 @@ fundTransfer 项目是 Vue 3 + Element Plus 子应用，所有 Vue 文件中的�
 | `exclude`             | 排除哪些文件                         |
 | `translateAttributes` | 哪些属性中的中文需要翻译（白名单）   |
 | `ignoreAttributes`    | 哪些属性中的中文永远不翻译（黑名单） |
-| `ignoreMethods`       | 哪些方法调用中的字符串参数不翻译     |
+| `translateMethods`    | 需要翻译的方法调用白名单           |
 | `output`              | locale 文件输出目录                  |
 | `sourceLanguage`      | 源码语言                             |
 | `targetLanguages`     | 目标语言列表                         |
@@ -63,7 +63,7 @@ fundTransfer 项目是 Vue 3 + Element Plus 子应用，所有 Vue 文件中的�
 
 ### 3.2 `pnpm run i18n:gap` — 盲区扫描模式
 
-输出**所有**出现中文的地方，不受配置文件限制。不管是否在 `translateAttributes` 白名单、不管是否 `ignoreMethods`、不管是否指令。
+输出**所有**出现中文的地方，不受配置文件限制。不管是否在 `translateAttributes` 白名单、不管是否 `translateMethods`、不管是否指令。
 
 目的：发现脚本的扫描盲区，根据输出优化脚本。
 
@@ -159,12 +159,12 @@ scripts/i18n-scan/
 - `StringLiteral`：`'付款暂存失败'` → 提取
 - `TemplateLiteral`：`` `完成时间：${date}` `` → 归类「特殊-未处理」
 - **二元表达式**（`+` 拼接）：`'完成时间：' + variable` → 提取字符串中的中文，归类「特殊-未处理」
-- 跳过 `ignoreMethods` 中的方法调用参数
+- 跳过不在 `translateMethods` 白名单的方法调用参数
 - 跳过 import 声明、类型注解、注释
 
 ### 跳过规则
 
-1. `ignoreMethods` 中的方法调用参数 → 跳过
+1. 不在 `translateMethods` 白名单的方法调用参数 → 跳过
 2. `ignoreAttributes` 中的属性 → 跳过
 3. `exclude` 中的文件 → 跳过
 4. 注释（`<!-- -->`、`//`、`/* */`）→ 跳过
@@ -277,5 +277,5 @@ dry-run 验证通过后执行。不在本次范围。
 3. 检查「已匹配」是否使用了现有 locale 中的 key
 4. 检查「未匹配」是否生成了合理的 camelCase key
 5. 检查指令中的中文是否被正确忽略（不在白名单的）
-6. 检查 `ignoreMethods`、`ignoreAttributes` 是否正确跳过
+6. 检查 `translateMethods`、`ignoreAttributes` 是否正确跳过
 7. `pnpm run i18n:init` — 验证生成的文件结构

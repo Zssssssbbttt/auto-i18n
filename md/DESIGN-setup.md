@@ -68,7 +68,7 @@ node i18n-scan.bundle.js
 |--------|------|
 | `translateAttributes` | 14 项白名单，通用性强 |
 | `ignoreAttributes` | 30+ 项黑名单，通用性强 |
-| `ignoreMethods` | 通用性强 |
+| `translateMethods` | 通用性强 |
 | `ai.temperature` | 技术参数，默认 0.3 够用 |
 | `ai.maxTokens` | 技术参数，默认 200000 够用 |
 | `ai.systemPrompt` | 内容太长，不适合终端展示 |

@@ -71,7 +71,7 @@ scripts/i18n-scan/
 - `entry` / `exclude` — 扫描范围（glob 模式）
 - `translateAttributes` — 需要翻译的 HTML 属性白名单（如 label, placeholder, title）
 - `ignoreAttributes` — 永远不翻译的属性黑名单（优先级更高）
-- `ignoreMethods` — 跳过的方法调用参数（如 console.log, includes）
+- `translateMethods` — 需要翻译的方法调用白名单（支持通配符如 ElMessage.*），函数调用参数默认跳过
 - `sourceLanguage` / `targetLanguages` — 源语言和目标语言列表
 - `output` — locale 输出目录（默认 src/locales）
 - `ai.enabled` / `ai.apiKey` / `ai.baseURL` / `ai.model` — AI 翻译配置
@@ -88,7 +88,7 @@ scripts/i18n-scan/
 ## 跳过规则（优先级从高到低）
 1. `ignoreAttributes` 黑名单属性 → 跳过
 2. 不在 `translateAttributes` 白名单的属性 → 跳过
-3. `ignoreMethods` 中的方法调用参数 → 跳过
+3. 不在 `translateMethods` 白名单的方法调用参数 → 跳过
 4. `exclude` 中的文件 → 跳过
 5. 注释、import 声明、TS 类型注解 → 跳过
 6. 已有 `$t()` 调用 → 跳过

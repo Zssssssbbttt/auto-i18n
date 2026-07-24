@@ -38,8 +38,8 @@ export default {
   // 永远不翻译的属性（黑名单，优先级更高）
   ignoreAttributes: ['style', 'class', 'ref', 'key', 'id', 'type'],
 
-  // 跳过这些方法的字符串参数
-  ignoreMethods: ['console.log', 'console.error', 'includes', 'split'],
+  // 需要翻译的方法调用（白名单，支持通配符如 ElMessage.*）
+  translateMethods: ['ElMessage.*', 'ElMessageBox.*', 'ElNotification.*', 'alert', 'confirm'],
 
   // 日志目录
   logDir: 'logs',

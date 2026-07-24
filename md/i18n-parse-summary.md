@@ -271,8 +271,8 @@ const labels = items.map(item => item.status === 1 ? '启用' : '禁用')
 | 情况 | 示例 | 原因 |
 |------|------|------|
 | import/export 声明 | `import { ref } from 'vue'` | `isInImport()` 返回 true |
-| ignoreMethods 方法参数 | `console.log('调试信息')` | `isIgnoredMethodArg()` 返回 true |
-| ignoreMethods 仅方法名 | `'abc'.includes('中')` | 支持仅方法名匹配 |
+| 不在 translateMethods 白名单的方法参数 | `fn('调试信息')` | `isTranslatableMethodArg()` 返回 false |
+| 成员表达式赋值 | `form.status = '已通过'` | `isMemberAssignmentTarget()` 返回 true |
 | 对象 key | `{ '中文键名': 'value' }` | `ObjectProperty` 且 `key === node` |
 | TS 类型注解 | `type Status = '已通过' \| '未通过'` | `TSLiteralType` 跳过 |
 | 无中文的字符串 | `const key = 'hello'` | `hasChinese()` 返回 false |
@@ -337,7 +337,7 @@ const el = <Input placeholder="请输入" />
 
 `JSXText` 和 `JSXAttribute` 不是 `StringLiteral`，会被漏掉。Vue 项目中 JSX 使用较少。
 
-#### 5. ignoreMethods 不支持通配符（低风险）
+#### 5. translateMethods 支持通配符（已解决）
 
 ```js
 ElMessage.error('操作失败')
@@ -345,7 +345,7 @@ ElMessage.success('保存成功')
 ElNotification.warning('请注意')
 ```
 
-需要逐个添加 `ElMessage.error`、`ElMessage.success` 等。如果支持 `ElMessage.*`，一条规则覆盖所有。
+`translateMethods` 支持 `ElMessage.*` 通配符，一条规则即可覆盖所有 Element Plus 消息方法。
 
 ---
 
@@ -353,11 +353,11 @@ ElNotification.warning('请注意')
 
 | 优先级 | 问题 | 建议方案 |
 |--------|------|----------|
-| **高** | 数据值被误翻译 | 新增 `ignoreAssignments` 配置 + `// i18n-ignore` 注释支持 |
+| **高** | 数据值被误翻译 | 已通过 `isMemberAssignmentTarget()` 检测成员表达式赋值（如 `form.status = '已通过'`），自动跳过 |
 | **中** | 嵌套拼接漏提取 | 递归遍历 BinaryExpression 拼接链 |
 | **中** | `$t()` 内中文二次替换 | 检查是否在 `$t()` 调用中 |
 | **低** | JSX 中文漏掉 | 增加 JSXText / JSXAttribute 处理 |
-| **低** | ignoreMethods 不支持通配 | 支持 `ElMessage.*` 通配符 |
+| **低** | translateMethods 支持通配符 | 已支持 `ElMessage.*` 通配符，一条规则覆盖所有子方法 |
 
 ---
 
