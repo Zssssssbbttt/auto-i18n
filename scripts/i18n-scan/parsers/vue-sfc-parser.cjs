@@ -15,7 +15,7 @@ const { parseScript } = require('./script-parser.cjs')
  * @param {object} config - 扫描配置
  * @param {string[]} config.translateAttributes - 属性白名单
  * @param {string[]} config.ignoreAttributes - 属性黑名单
- * @param {string[]} config.ignoreMethods - 方法黑名单
+ * @param {string[]} config.translateMethods - 方法白名单
  * @returns {{ results: object[], errors: string[] }}
  */
 function parseVueFile(filePath, source, config) {
@@ -84,7 +84,7 @@ function parseVueFile(filePath, source, config) {
       try {
         const scriptResults = parseScript(
           scriptSource,
-          config.ignoreMethods,
+          config.translateMethods,
           scriptStartLine
         )
         scriptResults.forEach((r) => {
