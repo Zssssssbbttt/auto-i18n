@@ -27,8 +27,8 @@ export default {
   // 永远不翻译的属性
   ignoreAttributes: ["style","class","ref","rules","model","prop","key","slot","name","id","type","format","value-format","range-separator","prefix-icon","suffix-icon","scoped","lang","src","href","target","width","size","mode","disabled","clearable","filterable","remote","reserve-keyword","multiple","show-overflow-tooltip","align","maxlength","rows","trigger","icon"],
 
-  // 跳过这些方法的字符串参数
-  ignoreMethods: ["console.log","console.error","console.warn","console.info","openTag","indexOf","includes","split","toString"],
+  // 需要翻译的方法调用（白名单，支持通配符如 ElMessage.*）
+  translateMethods: ["ElMessage.*","ElMessageBox.*","ElNotification.*","alert","confirm"],
 
   // key 命名风格
   keyStyle: "camelCase",
