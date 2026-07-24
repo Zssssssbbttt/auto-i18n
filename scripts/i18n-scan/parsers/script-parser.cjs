@@ -47,6 +47,9 @@ function parseScript(code, translateMethods, scriptStartLine) {
       // 跳过成员表达式赋值（form.status = '中文'）
       if (isMemberAssignmentTarget(path)) return
 
+      // 跳过字符串拼接的操作数（由 BinaryExpression 访问器统一处理）
+      if (isInStringConcat(path)) return
+
       // 函数调用参数：不在白名单则跳过
       if (isInCallExpression(path) && !isTranslatableMethodArg(path, translateMethods)) return
 
@@ -205,13 +208,24 @@ function parseScript(code, translateMethods, scriptStartLine) {
         : scriptStartLine
 
       chineseParts.forEach((chineseText) => {
-        results.push({
-          line,
-          chineseText,
-          type: 'special-string-concat',
-          reason: '字符串 + 拼接含变量',
-          context: getContext(path, sourceLines, scriptStartLine),
-        })
+        if (isInVariableDeclarator(path)) {
+          // 变量声明赋值中的字符串拼接 → 正常替换
+          results.push({
+            line,
+            chineseText,
+            type: 'script-string',
+            context: getContext(path, sourceLines, scriptStartLine),
+          })
+        } else {
+          // 非变量声明 → 特殊-未处理
+          results.push({
+            line,
+            chineseText,
+            type: 'special-string-concat',
+            reason: '字符串 + 拼接含变量',
+            context: getContext(path, sourceLines, scriptStartLine),
+          })
+        }
       })
     },
   })
@@ -296,6 +310,29 @@ function isInConditionalExpression(path) {
 }
 
 /**
+ * 判断节点是否在变量声明赋值中（const/let/var x = ...）
+ * 遇到函数边界（FunctionDeclaration/FunctionExpression/ArrowFunctionExpression/CallExpression）时停止
+ * @param {object} path - babel traverse path
+ * @returns {boolean}
+ */
+function isInVariableDeclarator(path) {
+  let current = path.parentPath
+  while (current) {
+    const type = current.node.type
+    if (type === 'VariableDeclarator') return true
+    // 遇到函数边界或调用表达式时停止，避免穿透到外层
+    if (
+      type === 'FunctionDeclaration' ||
+      type === 'FunctionExpression' ||
+      type === 'ArrowFunctionExpression' ||
+      type === 'CallExpression'
+    ) return false
+    current = current.parentPath
+  }
+  return false
+}
+
+/**
  * 判断字符串是否作为成员表达式赋值的右值
  * 例如：form.status = '已通过' → 跳过（大概率是提交给后端的数据值）
  * @param {object} path - babel traverse path
@@ -319,6 +356,15 @@ function isMemberAssignmentTarget(path) {
  */
 function isInCallExpression(path) {
   return path.parent.type === 'CallExpression'
+}
+
+/**
+ * 判断字符串是否是 + 拼接表达式的操作数
+ * 这些由 BinaryExpression 访问器统一处理，StringLiteral 不重复处理
+ */
+function isInStringConcat(path) {
+  const parent = path.parent
+  return parent.type === 'BinaryExpression' && parent.operator === '+'
 }
 
 /**
