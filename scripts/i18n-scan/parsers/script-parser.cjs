@@ -10,11 +10,11 @@ const { hasChinese } = require('../utils/chinese-detector.cjs')
 /**
  * 解析脚本代码，提取所有需要翻译的中文文本
  * @param {string} code - 脚本源代码
- * @param {string[]} ignoreMethods - 跳过的方法名列表（如 console.log）
+ * @param {string[]} translateMethods - 白名单方法列表（只有这些方法的参数才翻译）
  * @param {number} scriptStartLine - 脚本在 .vue 文件中的起始行号（1-based）
  * @returns {object[]} 扫描结果数组
  */
-function parseScript(code, ignoreMethods, scriptStartLine) {
+function parseScript(code, translateMethods, scriptStartLine) {
   const results = []
   // 将源码按行拆分，用于提取上下文
   const sourceLines = code.split('\n')
@@ -44,8 +44,11 @@ function parseScript(code, ignoreMethods, scriptStartLine) {
       // 跳过 import/export 声明中的字符串
       if (isInImport(path)) return
 
-      // 跳过 ignoreMethods 中的方法调用参数
-      if (isIgnoredMethodArg(path, ignoreMethods)) return
+      // 跳过成员表达式赋值（form.status = '中文'）
+      if (isMemberAssignmentTarget(path)) return
+
+      // 函数调用参数：不在白名单则跳过
+      if (isInCallExpression(path) && !isTranslatableMethodArg(path, translateMethods)) return
 
       // 跳过对象 key
       if (
@@ -103,7 +106,7 @@ function parseScript(code, ignoreMethods, scriptStartLine) {
           })
         } else {
           // 不含插值 → 正常处理
-          if (isIgnoredMethodArg(path, ignoreMethods)) return
+          if (isInCallExpression(path) && !isTranslatableMethodArg(path, translateMethods)) return
           results.push({
             line,
             chineseText: text.trim(),
@@ -191,12 +194,16 @@ function isInImport(path) {
 }
 
 /**
- * 判断字符串是否作为 ignoreMethods 中方法的参数
- * 例如：console.log('加载失败') → 跳过
- * 支持完整方法名匹配（console.log）和仅方法名匹配（includes）
+ * 判断字符串是否作为 translateMethods 白名单中方法的参数
+ * 默认：函数调用参数不翻译，只有匹配白名单的才翻译
+ * 支持通配符：'ElMessage.*' 匹配 ElMessage.success / ElMessage.warning 等
+ * 仅完整链匹配，不支持裸方法名匹配
+ * @param {object} path - babel traverse path
+ * @param {string[]} translateMethods - 白名单方法列表
+ * @returns {boolean} true = 应该翻译
  */
-function isIgnoredMethodArg(path, ignoreMethods) {
-  if (!ignoreMethods || ignoreMethods.length === 0) return false
+function isTranslatableMethodArg(path, translateMethods) {
+  if (!translateMethods || translateMethods.length === 0) return false
 
   const parent = path.parent
 
@@ -204,13 +211,20 @@ function isIgnoredMethodArg(path, ignoreMethods) {
   if (parent.type === 'CallExpression') {
     const callee = parent.callee
     const fullName = getFullMethodName(callee)
-    if (fullName) {
-      // 完整匹配：console.log
-      if (ignoreMethods.includes(fullName)) return true
-      // 仅方法名匹配：includes、indexOf 等
-      const methodName = fullName.split('.').pop()
-      if (ignoreMethods.includes(methodName)) return true
+    if (!fullName) return false
+
+    // 精确匹配
+    if (translateMethods.includes(fullName)) return true
+
+    // 通配符匹配：ElMessage.* → 匹配 ElMessage.success 等
+    for (const pattern of translateMethods) {
+      if (pattern.endsWith('.*')) {
+        const prefix = pattern.slice(0, -2)
+        if (fullName.startsWith(prefix + '.')) return true
+      }
     }
+
+    return false
   }
 
   return false
@@ -226,6 +240,32 @@ function isInConditionalExpression(path) {
     current = current.parentPath
   }
   return false
+}
+
+/**
+ * 判断字符串是否作为成员表达式赋值的右值
+ * 例如：form.status = '已通过' → 跳过（大概率是提交给后端的数据值）
+ * @param {object} path - babel traverse path
+ * @returns {boolean}
+ */
+function isMemberAssignmentTarget(path) {
+  const parent = path.parent
+  if (
+    parent.type === 'AssignmentExpression' &&
+    parent.left &&
+    parent.left.type === 'MemberExpression' &&
+    parent.right === path.node
+  ) {
+    return true
+  }
+  return false
+}
+
+/**
+ * 判断字符串是否在函数调用表达式中作为参数
+ */
+function isInCallExpression(path) {
+  return path.parent.type === 'CallExpression'
 }
 
 /**
