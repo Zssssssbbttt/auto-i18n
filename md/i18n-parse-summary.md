@@ -276,7 +276,6 @@ const labels = items.map(item => item.status === 1 ? '启用' : '禁用')
 | 对象 key | `{ '中文键名': 'value' }` | `ObjectProperty` 且 `key === node` |
 | TS 类型注解 | `type Status = '已通过' \| '未通过'` | `TSLiteralType` 跳过 |
 | 无中文的字符串 | `const key = 'hello'` | `hasChinese()` 返回 false |
-
 ---
 
 ### Script 需要注意的问题

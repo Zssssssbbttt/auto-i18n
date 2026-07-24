@@ -50,15 +50,6 @@ function parseScript(code, translateMethods, scriptStartLine, scanDeclarations =
       // 跳过字符串拼接的操作数（由 BinaryExpression 访问器统一处理）
       if (isInStringConcat(path)) return
 
-      // 跳过数组元素中的字符串
-      if (path.parent.type === 'ArrayExpression') return
-
-      // 函数调用参数：不在白名单则跳过
-      if (isInCallExpression(path) && !isTranslatableMethodArg(path, translateMethods)) return
-
-      // 变量声明赋值：未启用则跳过
-      if (!scanDeclarations && isInVariableDeclarator(path)) return
-
       // 跳过对象 key
       if (
         path.parent.type === 'ObjectProperty' &&
@@ -68,6 +59,11 @@ function parseScript(code, translateMethods, scriptStartLine, scanDeclarations =
 
       // 跳过 TS 类型注解
       if (path.parent.type === 'TSLiteralType') return
+
+      // 只翻译：变量声明赋值 或 白名单方法调用，其余全部跳过
+      const inDeclarator = scanDeclarations && isInVariableDeclarator(path)
+      const inWhitelist = isInCallExpression(path) && isTranslatableMethodArg(path, translateMethods)
+      if (!inDeclarator && !inWhitelist) return
 
       const line = path.node.loc
         ? path.node.loc.start.line + scriptStartLine
@@ -163,9 +159,11 @@ function parseScript(code, translateMethods, scriptStartLine, scanDeclarations =
             })
           }
         } else {
-          // 不含插值 → 正常处理
+          // 不含插值 → 只翻译变量声明赋值或白名单方法调用
           if (isMemberAssignmentTarget(path)) return
-          if (isInCallExpression(path) && !isTranslatableMethodArg(path, translateMethods)) return
+          const inDecl = scanDeclarations && isInVariableDeclarator(path)
+          const inWL = isInCallExpression(path) && isTranslatableMethodArg(path, translateMethods)
+          if (!inDecl && !inWL) return
           results.push({
             line,
             chineseText: text.trim(),
@@ -300,7 +298,7 @@ function isTranslatableMethodArg(path, translateMethods) {
 
 /**
  * 判断节点是否在变量声明赋值中（const/let/var x = ...）
- * 遇到函数边界（FunctionDeclaration/FunctionExpression/ArrowFunctionExpression/CallExpression）时停止
+ * 遇到函数边界、调用表达式、三元表达式时停止
  * @param {object} path - babel traverse path
  * @returns {boolean}
  */
@@ -309,12 +307,13 @@ function isInVariableDeclarator(path) {
   while (current) {
     const type = current.node.type
     if (type === 'VariableDeclarator') return true
-    // 遇到函数边界或调用表达式时停止，避免穿透到外层
+    // 遇到函数边界、调用表达式或三元表达式时停止，避免穿透到外层
     if (
       type === 'FunctionDeclaration' ||
       type === 'FunctionExpression' ||
       type === 'ArrowFunctionExpression' ||
-      type === 'CallExpression'
+      type === 'CallExpression' ||
+      type === 'ConditionalExpression'
     ) return false
     current = current.parentPath
   }

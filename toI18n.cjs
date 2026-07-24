@@ -1,6 +1,6 @@
 // toI18n.cjs — Vue 3 i18n 自动扫描脚本
 // 用法: node toI18n.cjs
-// 生成时间: 2026-07-24T04:50:30.311Z
+// 生成时间: 2026-07-24T09:07:44.311Z
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) => function __require() {
@@ -88369,7 +88369,7 @@ var require_script_parser = __commonJS({
     var parser = require_lib();
     var traverse = require_lib8().default;
     var { hasChinese } = require_chinese_detector();
-    function parseScript(code, translateMethods, scriptStartLine) {
+    function parseScript(code, translateMethods, scriptStartLine, scanDeclarations = true) {
       const results = [];
       const sourceLines = code.split("\n");
       let ast;
@@ -88391,11 +88391,13 @@ var require_script_parser = __commonJS({
           if (!hasChinese(value)) return;
           if (isInImport(path2)) return;
           if (isMemberAssignmentTarget(path2)) return;
-          if (isInCallExpression(path2) && !isTranslatableMethodArg(path2, translateMethods)) return;
+          if (isInStringConcat(path2)) return;
           if (path2.parent.type === "ObjectProperty" && path2.parent.key === path2.node)
             return;
           if (path2.parent.type === "TSLiteralType") return;
-          if (isInConditionalExpression(path2)) return;
+          const inDeclarator = scanDeclarations && isInVariableDeclarator(path2);
+          const inWhitelist = isInCallExpression(path2) && isTranslatableMethodArg(path2, translateMethods);
+          if (!inDeclarator && !inWhitelist) return;
           const line = path2.node.loc ? path2.node.loc.start.line + scriptStartLine : scriptStartLine;
           results.push({
             line,
@@ -88409,7 +88411,6 @@ var require_script_parser = __commonJS({
          * 含变量插值的归类为「特殊-未处理」
          */
         TemplateLiteral(path2) {
-          if (isInConditionalExpression(path2)) return;
           const quasis = path2.node.quasis || [];
           const hasInterpolation = path2.node.expressions && path2.node.expressions.length > 0;
           quasis.forEach((quasi) => {
@@ -88417,16 +88418,63 @@ var require_script_parser = __commonJS({
             if (!hasChinese(text)) return;
             const line = path2.node.loc ? path2.node.loc.start.line + scriptStartLine : scriptStartLine;
             if (hasInterpolation) {
-              results.push({
-                line,
-                chineseText: text.trim(),
-                type: "special-template-literal",
-                reason: "\u6A21\u677F\u5B57\u7B26\u4E32\u542B\u53D8\u91CF\u63D2\u503C",
-                context: getContext(path2, sourceLines, scriptStartLine)
-              });
+              if (path2.parent.type === "VariableDeclarator" && path2.parent.init === path2.node) {
+                if (!scanDeclarations) return;
+                const startLine = path2.node.loc.start.line;
+                const endLine = path2.node.loc.end.line;
+                if (startLine !== endLine) {
+                  results.push({
+                    line,
+                    chineseText: text.trim(),
+                    type: "special-template-literal",
+                    reason: "\u591A\u884C\u6A21\u677F\u5B57\u7B26\u4E32\u542B\u53D8\u91CF\u63D2\u503C",
+                    context: getContext(path2, sourceLines, scriptStartLine)
+                  });
+                  return;
+                }
+                const allQuasis = quasis.map(
+                  (q) => q.value.raw || q.value.cooked || ""
+                );
+                const allExpressions = (path2.node.expressions || []).map(
+                  (expr) => {
+                    if (expr.loc) {
+                      const exprLineIdx = expr.loc.start.line - 1;
+                      const exprLine = sourceLines[exprLineIdx];
+                      if (exprLine) {
+                        return exprLine.slice(
+                          expr.loc.start.column,
+                          expr.loc.end.column
+                        );
+                      }
+                    }
+                    return "";
+                  }
+                );
+                results.push({
+                  line,
+                  chineseText: text.trim(),
+                  type: "template-literal",
+                  quasiIndex: quasis.indexOf(quasi),
+                  templateStartCol: path2.node.loc.start.column,
+                  templateEndCol: path2.node.loc.end.column,
+                  quasis: allQuasis,
+                  expressions: allExpressions,
+                  context: getContext(path2, sourceLines, scriptStartLine)
+                });
+              } else {
+                results.push({
+                  line,
+                  chineseText: text.trim(),
+                  type: "special-template-literal",
+                  reason: "\u6A21\u677F\u5B57\u7B26\u4E32\u542B\u53D8\u91CF\u63D2\u503C",
+                  context: getContext(path2, sourceLines, scriptStartLine)
+                });
+              }
             } else {
               if (isMemberAssignmentTarget(path2)) return;
-              if (isInCallExpression(path2) && !isTranslatableMethodArg(path2, translateMethods)) return;
+              const inDecl = scanDeclarations && isInVariableDeclarator(path2);
+              const inWL = isInCallExpression(path2) && isTranslatableMethodArg(path2, translateMethods);
+              if (!inDecl && !inWL) return;
               results.push({
                 line,
                 chineseText: text.trim(),
@@ -88442,7 +88490,6 @@ var require_script_parser = __commonJS({
          */
         BinaryExpression(path2) {
           if (path2.node.operator !== "+") return;
-          if (isInConditionalExpression(path2)) return;
           const left = path2.node.left;
           const right = path2.node.right;
           const hasStringOperand = left.type === "StringLiteral" || right.type === "StringLiteral";
@@ -88457,13 +88504,23 @@ var require_script_parser = __commonJS({
           if (chineseParts.length === 0) return;
           const line = path2.node.loc ? path2.node.loc.start.line + scriptStartLine : scriptStartLine;
           chineseParts.forEach((chineseText) => {
-            results.push({
-              line,
-              chineseText,
-              type: "special-string-concat",
-              reason: "\u5B57\u7B26\u4E32 + \u62FC\u63A5\u542B\u53D8\u91CF",
-              context: getContext(path2, sourceLines, scriptStartLine)
-            });
+            if (isInVariableDeclarator(path2)) {
+              if (!scanDeclarations) return;
+              results.push({
+                line,
+                chineseText,
+                type: "script-string",
+                context: getContext(path2, sourceLines, scriptStartLine)
+              });
+            } else {
+              results.push({
+                line,
+                chineseText,
+                type: "special-string-concat",
+                reason: "\u5B57\u7B26\u4E32 + \u62FC\u63A5\u542B\u53D8\u91CF",
+                context: getContext(path2, sourceLines, scriptStartLine)
+              });
+            }
           });
         }
       });
@@ -88501,10 +88558,12 @@ var require_script_parser = __commonJS({
       }
       return false;
     }
-    function isInConditionalExpression(path2) {
+    function isInVariableDeclarator(path2) {
       let current = path2.parentPath;
       while (current) {
-        if (current.node.type === "ConditionalExpression") return true;
+        const type = current.node.type;
+        if (type === "VariableDeclarator") return true;
+        if (type === "FunctionDeclaration" || type === "FunctionExpression" || type === "ArrowFunctionExpression" || type === "CallExpression" || type === "ConditionalExpression") return false;
         current = current.parentPath;
       }
       return false;
@@ -88518,6 +88577,10 @@ var require_script_parser = __commonJS({
     }
     function isInCallExpression(path2) {
       return path2.parent.type === "CallExpression";
+    }
+    function isInStringConcat(path2) {
+      const parent = path2.parent;
+      return parent.type === "BinaryExpression" && parent.operator === "+";
     }
     function getFullMethodName(callee) {
       if (!callee) return null;
@@ -88625,7 +88688,8 @@ var require_vue_sfc_parser = __commonJS({
             const scriptResults = parseScript(
               scriptSource,
               config.translateMethods,
-              scriptStartLine
+              scriptStartLine,
+              config.scanScriptDeclarations
             );
             scriptResults.forEach((r) => {
               r.file = filePath;
@@ -88820,6 +88884,57 @@ var require_replacer = __commonJS({
         const lineIdx = item.line - 1;
         if (!byLine[lineIdx]) byLine[lineIdx] = [];
         byLine[lineIdx].push({ ...item, key });
+      }
+      const templateLiteralGroups = {};
+      for (const lineIdx of Object.keys(byLine)) {
+        const lineItems = byLine[lineIdx];
+        const templateItems = lineItems.filter(
+          (i) => i.type === "template-literal"
+        );
+        if (templateItems.length === 0) continue;
+        for (const item of templateItems) {
+          const groupKey = `${item.templateStartCol}:${item.templateEndCol}`;
+          if (!templateLiteralGroups[`${lineIdx}:${groupKey}`]) {
+            templateLiteralGroups[`${lineIdx}:${groupKey}`] = {
+              lineIdx: Number(lineIdx),
+              startCol: item.templateStartCol,
+              endCol: item.templateEndCol,
+              quasis: item.quasis,
+              expressions: item.expressions,
+              items: []
+            };
+          }
+          templateLiteralGroups[`${lineIdx}:${groupKey}`].items.push(item);
+        }
+        byLine[lineIdx] = lineItems.filter((i) => i.type !== "template-literal");
+        if (byLine[lineIdx].length === 0) delete byLine[lineIdx];
+      }
+      for (const groupKey of Object.keys(templateLiteralGroups)) {
+        const group = templateLiteralGroups[groupKey];
+        const lineIdx = group.lineIdx;
+        let line = lines[lineIdx];
+        if (!line) continue;
+        const quasiKeyMap = {};
+        for (const item of group.items) {
+          if (item.key) {
+            quasiKeyMap[item.quasiIndex] = item.key;
+          }
+        }
+        let newTemplate = "`";
+        for (let i = 0; i < group.quasis.length; i++) {
+          if (quasiKeyMap[i] !== void 0) {
+            newTemplate += "${$t('" + quasiKeyMap[i] + "')}";
+          } else {
+            newTemplate += group.quasis[i];
+          }
+          if (i < group.expressions.length) {
+            newTemplate += "${" + group.expressions[i] + "}";
+          }
+        }
+        newTemplate += "`";
+        line = line.slice(0, group.startCol) + newTemplate + line.slice(group.endCol + 1);
+        lines[lineIdx] = line;
+        changed = true;
       }
       const lineNums = Object.keys(byLine).map(Number).sort((a, b) => b - a);
       for (const lineIdx of lineNums) {
@@ -90429,6 +90544,13 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         default: true
       },
       {
+        key: "scanScriptDeclarations",
+        title: "\u662F\u5426\u66FF\u6362\u53D8\u91CF\u58F0\u660E\u8D4B\u503C\u4E2D\u7684\u4E2D\u6587\uFF1F",
+        description: "\u542F\u7528\u540E const msg = '\u4E2D\u6587' \u8FD9\u7C7B\u53D8\u91CF\u8D4B\u503C\u4E5F\u4F1A\u66FF\u6362\u4E3A $t()\uFF0C\u5173\u95ED\u5219\u53EA\u66FF\u6362\u767D\u540D\u5355\u65B9\u6CD5\u8C03\u7528\u4E2D\u7684\u4E2D\u6587",
+        type: "confirm",
+        default: true
+      },
+      {
         key: "translateAttributes",
         title: "\u9700\u8981\u7FFB\u8BD1\u7684 HTML \u5C5E\u6027",
         description: "\u8FD9\u4E9B\u5C5E\u6027\u4E2D\u7684\u4E2D\u6587\u4F1A\u88AB\u63D0\u53D6\u7FFB\u8BD1",
@@ -90607,6 +90729,9 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       lines.push("  // \u662F\u5426\u626B\u63CF <script> \u4E2D\u7684\u4E2D\u6587");
       lines.push(`  scanScript: ${nested.scanScript !== false},`);
       lines.push("");
+      lines.push("  // \u662F\u5426\u66FF\u6362\u53D8\u91CF\u58F0\u660E\u8D4B\u503C\u4E2D\u7684\u4E2D\u6587");
+      lines.push(`  scanScriptDeclarations: ${nested.scanScriptDeclarations !== false},`);
+      lines.push("");
       lines.push("  // \u8F93\u51FA\u76EE\u5F55");
       lines.push(`  output: ${JSON.stringify(nested.output || "src/locales")},`);
       lines.push(`  baseDir: ${JSON.stringify(nested.baseDir || "src")},`);
@@ -90714,6 +90839,10 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
             item.key,
             item.default
           );
+          if (item.key === "scanScriptDeclarations" && newConfig.scanScript === false) {
+            newConfig[item.key] = false;
+            continue;
+          }
           console.log(`${bold(item.title)}`);
           const value = await askItem(prompt, item, defaultValue, existingConfig);
           newConfig[item.key] = value;
@@ -90841,6 +90970,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
           Array.isArray(config.exclude) ? `${config.exclude.length} \u9879` : config.exclude || "(\u65E0)"
         ],
         ["\u626B\u63CF script", config.scanScript !== false ? "\u662F" : "\u5426"],
+        ...config.scanScript !== false ? [["\u66FF\u6362\u53D8\u91CF\u58F0\u660E", config.scanScriptDeclarations !== false ? "\u662F" : "\u5426"]] : [],
         ["\u6E90\u7801\u8BED\u8A00", config.sourceLanguage],
         [
           "\u76EE\u6807\u8BED\u8A00",
@@ -90928,6 +91058,7 @@ function normalizeConfig(config) {
   return {
     projectPath: config.projectPath || ".",
     scanScript: config.scanScript !== void 0 ? config.scanScript : true,
+    scanScriptDeclarations: config.scanScriptDeclarations !== void 0 ? config.scanScriptDeclarations : true,
     entry: config.entry || ["src/**/*.vue"],
     exclude: config.exclude || [],
     output: config.output || "src/locales",

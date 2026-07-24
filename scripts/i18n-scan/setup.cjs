@@ -1125,6 +1125,12 @@ async function runSetup(existingConfig, configPath) {
         item.default,
       );
 
+      // scanScript 为否时，跳过 scanScriptDeclarations 问题
+      if (item.key === 'scanScriptDeclarations' && newConfig.scanScript === false) {
+        newConfig[item.key] = false
+        continue
+      }
+
       console.log(`${bold(item.title)}`);
 
       const value = await askItem(prompt, item, defaultValue, existingConfig);
@@ -1283,7 +1289,9 @@ function printSummary(config) {
         : config.exclude || "(无)",
     ],
     ["扫描 script", config.scanScript !== false ? "是" : "否"],
-    ["替换变量声明", config.scanScriptDeclarations !== false ? "是" : "否"],
+    ...(config.scanScript !== false
+      ? [["替换变量声明", config.scanScriptDeclarations !== false ? "是" : "否"]]
+      : []),
     ["源码语言", config.sourceLanguage],
     [
       "目标语言",
