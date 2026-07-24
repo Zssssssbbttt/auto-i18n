@@ -50,9 +50,6 @@ function parseScript(code, translateMethods, scriptStartLine) {
       // 跳过字符串拼接的操作数（由 BinaryExpression 访问器统一处理）
       if (isInStringConcat(path)) return
 
-      // 跳过 $t() 调用中的字符串（防止 $t('确认') → $t($t('...')) 二次替换）
-      if (isInTCall(path)) return
-
       // 跳过数组元素中的字符串
       if (path.parent.type === 'ArrayExpression') return
 
@@ -350,17 +347,6 @@ function isInCallExpression(path) {
 function isInStringConcat(path) {
   const parent = path.parent
   return parent.type === 'BinaryExpression' && parent.operator === '+'
-}
-
-/**
- * 判断字符串是否是 $t() 调用的参数
- * 防止 $t('确认') 中的 '确认' 被二次提取为 $t($t('...'))
- */
-function isInTCall(path) {
-  const parent = path.parent
-  if (parent.type !== 'CallExpression') return false
-  const callee = parent.callee
-  return callee.type === 'Identifier' && callee.name === '$t'
 }
 
 /**
