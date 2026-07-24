@@ -85,7 +85,8 @@ function parseVueFile(filePath, source, config) {
         const scriptResults = parseScript(
           scriptSource,
           config.translateMethods,
-          scriptStartLine
+          scriptStartLine,
+          config.scanScriptDeclarations
         )
         scriptResults.forEach((r) => {
           r.file = filePath

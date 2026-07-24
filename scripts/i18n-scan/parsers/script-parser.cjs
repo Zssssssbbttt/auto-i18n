@@ -14,7 +14,7 @@ const { hasChinese } = require('../utils/chinese-detector.cjs')
  * @param {number} scriptStartLine - 脚本在 .vue 文件中的起始行号（1-based）
  * @returns {object[]} 扫描结果数组
  */
-function parseScript(code, translateMethods, scriptStartLine) {
+function parseScript(code, translateMethods, scriptStartLine, scanDeclarations = true) {
   const results = []
   // 将源码按行拆分，用于提取上下文
   const sourceLines = code.split('\n')
@@ -55,6 +55,9 @@ function parseScript(code, translateMethods, scriptStartLine) {
 
       // 函数调用参数：不在白名单则跳过
       if (isInCallExpression(path) && !isTranslatableMethodArg(path, translateMethods)) return
+
+      // 变量声明赋值：未启用则跳过
+      if (!scanDeclarations && isInVariableDeclarator(path)) return
 
       // 跳过对象 key
       if (
@@ -101,6 +104,9 @@ function parseScript(code, translateMethods, scriptStartLine) {
             path.parent.type === 'VariableDeclarator' &&
             path.parent.init === path.node
           ) {
+            // 变量声明赋值未启用 → 跳过
+            if (!scanDeclarations) return
+
             // 多行模板字符串跳过，标记为特殊
             const startLine = path.node.loc.start.line
             const endLine = path.node.loc.end.line
@@ -203,6 +209,7 @@ function parseScript(code, translateMethods, scriptStartLine) {
 
       chineseParts.forEach((chineseText) => {
         if (isInVariableDeclarator(path)) {
+          if (!scanDeclarations) return
           // 变量声明赋值中的字符串拼接 → 正常替换
           results.push({
             line,

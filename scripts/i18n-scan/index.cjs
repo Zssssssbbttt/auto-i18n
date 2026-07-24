@@ -72,6 +72,7 @@ function normalizeConfig(config) {
   return {
     projectPath: config.projectPath || ".",
     scanScript: config.scanScript !== undefined ? config.scanScript : true,
+    scanScriptDeclarations: config.scanScriptDeclarations !== undefined ? config.scanScriptDeclarations : true,
     entry: config.entry || ["src/**/*.vue"],
     exclude: config.exclude || [],
     output: config.output || "src/locales",

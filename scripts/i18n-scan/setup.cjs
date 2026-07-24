@@ -763,6 +763,13 @@ const MAIN_ITEMS = [
     default: true,
   },
   {
+    key: "scanScriptDeclarations",
+    title: "是否替换变量声明赋值中的中文？",
+    description: "启用后 const msg = '中文' 这类变量赋值也会替换为 $t()，关闭则只替换白名单方法调用中的中文",
+    type: "confirm",
+    default: true,
+  },
+  {
     key: "translateAttributes",
     title: "需要翻译的 HTML 属性",
     description: "这些属性中的中文会被提取翻译",
@@ -983,6 +990,9 @@ function writeConfig(flat, configPath) {
   lines.push("");
   lines.push("  // 是否扫描 <script> 中的中文");
   lines.push(`  scanScript: ${nested.scanScript !== false},`);
+  lines.push("");
+  lines.push("  // 是否替换变量声明赋值中的中文");
+  lines.push(`  scanScriptDeclarations: ${nested.scanScriptDeclarations !== false},`);
   lines.push("");
   lines.push("  // 输出目录");
   lines.push(`  output: ${JSON.stringify(nested.output || "src/locales")},`);
@@ -1273,6 +1283,7 @@ function printSummary(config) {
         : config.exclude || "(无)",
     ],
     ["扫描 script", config.scanScript !== false ? "是" : "否"],
+    ["替换变量声明", config.scanScriptDeclarations !== false ? "是" : "否"],
     ["源码语言", config.sourceLanguage],
     [
       "目标语言",
