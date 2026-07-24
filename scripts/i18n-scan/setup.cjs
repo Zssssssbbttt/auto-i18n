@@ -597,16 +597,12 @@ const DEFAULT_IGNORE_ATTRIBUTES = [
   "icon",
 ];
 
-const DEFAULT_IGNORE_METHODS = [
-  "console.log",
-  "console.error",
-  "console.warn",
-  "console.info",
-  "openTag",
-  "indexOf",
-  "includes",
-  "split",
-  "toString",
+const DEFAULT_TRANSLATE_METHODS = [
+  "ElMessage.*",
+  "ElMessageBox.*",
+  "ElNotification.*",
+  "alert",
+  "confirm",
 ];
 
 const AI_SYSTEM_PROMPT = `# 角色定义
@@ -781,11 +777,11 @@ const MAIN_ITEMS = [
     default: DEFAULT_IGNORE_ATTRIBUTES,
   },
   {
-    key: "ignoreMethods",
-    title: "跳过的方法字符串参数",
-    description: "这些方法调用中的字符串参数不翻译",
+    key: "translateMethods",
+    title: "需要翻译的方法调用",
+    description: "只有这些方法调用中的字符串参数会被翻译（支持通配符如 ElMessage.*）",
     type: "editableList",
-    default: DEFAULT_IGNORE_METHODS,
+    default: DEFAULT_TRANSLATE_METHODS,
   },
   {
     key: "localeStorageKey",
@@ -967,8 +963,8 @@ function writeConfig(flat, configPath) {
   nested.ignoreAttributes = ensureArray(
     nested.ignoreAttributes || DEFAULT_IGNORE_ATTRIBUTES,
   );
-  nested.ignoreMethods = ensureArray(
-    nested.ignoreMethods || DEFAULT_IGNORE_METHODS,
+  nested.translateMethods = ensureArray(
+    nested.translateMethods || DEFAULT_TRANSLATE_METHODS,
   );
 
   const ai = nested.ai || {};
@@ -1009,8 +1005,8 @@ function writeConfig(flat, configPath) {
   lines.push("  // 永远不翻译的属性");
   lines.push(`  ignoreAttributes: ${JSON.stringify(nested.ignoreAttributes)},`);
   lines.push("");
-  lines.push("  // 跳过这些方法的字符串参数");
-  lines.push(`  ignoreMethods: ${JSON.stringify(nested.ignoreMethods)},`);
+  lines.push("  // 需要翻译的方法调用（白名单，支持通配符如 ElMessage.*）");
+  lines.push(`  translateMethods: ${JSON.stringify(nested.translateMethods)},`);
   lines.push("");
   lines.push("  // key 命名风格");
   lines.push(`  keyStyle: ${JSON.stringify(nested.keyStyle || "camelCase")},`);
@@ -1297,9 +1293,9 @@ function printSummary(config) {
         : "(无)",
     ],
     [
-      "忽略方法",
-      Array.isArray(config.ignoreMethods)
-        ? `${config.ignoreMethods.length} 项`
+      "翻译方法",
+      Array.isArray(config.translateMethods)
+        ? `${config.translateMethods.length} 项`
         : "(无)",
     ],
     ["存储键名", config.localeStorageKey],
