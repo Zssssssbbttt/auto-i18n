@@ -80,7 +80,13 @@ function normalizeConfig(config) {
     localeStorageKey: config.localeStorageKey || "lang",
     translateAttributes: config.translateAttributes || [],
     ignoreAttributes: config.ignoreAttributes || [],
-    ignoreMethods: config.ignoreMethods || [],
+    translateMethods: config.translateMethods || [
+      'ElMessage.*',
+      'ElMessageBox.*',
+      'ElNotification.*',
+      'alert',
+      'confirm',
+    ],
     logDir: config.logDir || "logs",
     ai: config.ai || { enabled: false },
   };
