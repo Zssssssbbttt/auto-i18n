@@ -38,6 +38,70 @@ function replaceInFile(filePath, items, reverseMap) {
     byLine[lineIdx].push({ ...item, key })
   }
 
+  // 处理 template-literal 类型：按行列范围分组，整体重建模板字符串
+  // 例如：const msg = `共${total}条记录` → const msg = `${$t('key1')}${total}${$t('key2')}`
+  const templateLiteralGroups = {}
+  for (const lineIdx of Object.keys(byLine)) {
+    const lineItems = byLine[lineIdx]
+    const templateItems = lineItems.filter(
+      (i) => i.type === 'template-literal'
+    )
+    if (templateItems.length === 0) continue
+
+    for (const item of templateItems) {
+      const groupKey = `${item.templateStartCol}:${item.templateEndCol}`
+      if (!templateLiteralGroups[`${lineIdx}:${groupKey}`]) {
+        templateLiteralGroups[`${lineIdx}:${groupKey}`] = {
+          lineIdx: Number(lineIdx),
+          startCol: item.templateStartCol,
+          endCol: item.templateEndCol,
+          quasis: item.quasis,
+          expressions: item.expressions,
+          items: [],
+        }
+      }
+      templateLiteralGroups[`${lineIdx}:${groupKey}`].items.push(item)
+    }
+
+    // 从 byLine 中移除 template-literal 条目（它们会被整体处理）
+    byLine[lineIdx] = lineItems.filter((i) => i.type !== 'template-literal')
+    if (byLine[lineIdx].length === 0) delete byLine[lineIdx]
+  }
+
+  // 对每组模板字符串执行重建
+  for (const groupKey of Object.keys(templateLiteralGroups)) {
+    const group = templateLiteralGroups[groupKey]
+    const lineIdx = group.lineIdx
+    let line = lines[lineIdx]
+    if (!line) continue
+
+    // 构建 quasiIndex → key 映射
+    const quasiKeyMap = {}
+    for (const item of group.items) {
+      if (item.key) {
+        quasiKeyMap[item.quasiIndex] = item.key
+      }
+    }
+
+    // 重建模板字符串：`静态中文${expr}静态中文` → `${$t('key')}${expr}${$t('key')}`
+    let newTemplate = '`'
+    for (let i = 0; i < group.quasis.length; i++) {
+      if (quasiKeyMap[i] !== undefined) {
+        newTemplate += '${$t(\'' + quasiKeyMap[i] + '\')}'
+      } else {
+        newTemplate += group.quasis[i]
+      }
+      if (i < group.expressions.length) {
+        newTemplate += '${' + group.expressions[i] + '}'
+      }
+    }
+    newTemplate += '`'
+
+    line = line.slice(0, group.startCol) + newTemplate + line.slice(group.endCol + 1)
+    lines[lineIdx] = line
+    changed = true
+  }
+
   // 从后往前处理每一行
   const lineNums = Object.keys(byLine)
     .map(Number)

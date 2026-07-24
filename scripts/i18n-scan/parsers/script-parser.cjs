@@ -96,14 +96,66 @@ function parseScript(code, translateMethods, scriptStartLine) {
           : scriptStartLine
 
         if (hasInterpolation) {
-          // 含变量插值 → 特殊-未处理
-          results.push({
-            line,
-            chineseText: text.trim(),
-            type: 'special-template-literal',
-            reason: '模板字符串含变量插值',
-            context: getContext(path, sourceLines, scriptStartLine),
-          })
+          // 检查是否为变量声明赋值（const/let/var msg = `...`）
+          if (
+            path.parent.type === 'VariableDeclarator' &&
+            path.parent.init === path.node
+          ) {
+            // 多行模板字符串跳过，标记为特殊
+            const startLine = path.node.loc.start.line
+            const endLine = path.node.loc.end.line
+            if (startLine !== endLine) {
+              results.push({
+                line,
+                chineseText: text.trim(),
+                type: 'special-template-literal',
+                reason: '多行模板字符串含变量插值',
+                context: getContext(path, sourceLines, scriptStartLine),
+              })
+              return
+            }
+
+            // 收集所有 quasi 文本和 expression 源码
+            const allQuasis = quasis.map(
+              (q) => q.value.raw || q.value.cooked || ''
+            )
+            const allExpressions = (path.node.expressions || []).map(
+              (expr) => {
+                if (expr.loc) {
+                  const exprLineIdx = expr.loc.start.line - 1
+                  const exprLine = sourceLines[exprLineIdx]
+                  if (exprLine) {
+                    return exprLine.slice(
+                      expr.loc.start.column,
+                      expr.loc.end.column
+                    )
+                  }
+                }
+                return ''
+              }
+            )
+
+            results.push({
+              line,
+              chineseText: text.trim(),
+              type: 'template-literal',
+              quasiIndex: quasis.indexOf(quasi),
+              templateStartCol: path.node.loc.start.column,
+              templateEndCol: path.node.loc.end.column,
+              quasis: allQuasis,
+              expressions: allExpressions,
+              context: getContext(path, sourceLines, scriptStartLine),
+            })
+          } else {
+            // 非变量声明 → 特殊-未处理
+            results.push({
+              line,
+              chineseText: text.trim(),
+              type: 'special-template-literal',
+              reason: '模板字符串含变量插值',
+              context: getContext(path, sourceLines, scriptStartLine),
+            })
+          }
         } else {
           // 不含插值 → 正常处理
           if (isMemberAssignmentTarget(path)) return
