@@ -1,6 +1,6 @@
 // toI18n.cjs — Vue 3 i18n 自动扫描脚本
 // 用法: node toI18n.cjs
-// 生成时间: 2026-07-22T09:35:59.110Z
+// 生成时间: 2026-07-24T04:50:30.311Z
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) => function __require() {
@@ -88369,7 +88369,7 @@ var require_script_parser = __commonJS({
     var parser = require_lib();
     var traverse = require_lib8().default;
     var { hasChinese } = require_chinese_detector();
-    function parseScript(code, ignoreMethods, scriptStartLine) {
+    function parseScript(code, translateMethods, scriptStartLine) {
       const results = [];
       const sourceLines = code.split("\n");
       let ast;
@@ -88390,10 +88390,12 @@ var require_script_parser = __commonJS({
           const value = path2.node.value;
           if (!hasChinese(value)) return;
           if (isInImport(path2)) return;
-          if (isIgnoredMethodArg(path2, ignoreMethods)) return;
+          if (isMemberAssignmentTarget(path2)) return;
+          if (isInCallExpression(path2) && !isTranslatableMethodArg(path2, translateMethods)) return;
           if (path2.parent.type === "ObjectProperty" && path2.parent.key === path2.node)
             return;
           if (path2.parent.type === "TSLiteralType") return;
+          if (isInConditionalExpression(path2)) return;
           const line = path2.node.loc ? path2.node.loc.start.line + scriptStartLine : scriptStartLine;
           results.push({
             line,
@@ -88407,6 +88409,7 @@ var require_script_parser = __commonJS({
          * 含变量插值的归类为「特殊-未处理」
          */
         TemplateLiteral(path2) {
+          if (isInConditionalExpression(path2)) return;
           const quasis = path2.node.quasis || [];
           const hasInterpolation = path2.node.expressions && path2.node.expressions.length > 0;
           quasis.forEach((quasi) => {
@@ -88422,7 +88425,8 @@ var require_script_parser = __commonJS({
                 context: getContext(path2, sourceLines, scriptStartLine)
               });
             } else {
-              if (isIgnoredMethodArg(path2, ignoreMethods)) return;
+              if (isMemberAssignmentTarget(path2)) return;
+              if (isInCallExpression(path2) && !isTranslatableMethodArg(path2, translateMethods)) return;
               results.push({
                 line,
                 chineseText: text.trim(),
@@ -88438,6 +88442,7 @@ var require_script_parser = __commonJS({
          */
         BinaryExpression(path2) {
           if (path2.node.operator !== "+") return;
+          if (isInConditionalExpression(path2)) return;
           const left = path2.node.left;
           const right = path2.node.right;
           const hasStringOperand = left.type === "StringLiteral" || right.type === "StringLiteral";
@@ -88478,19 +88483,41 @@ var require_script_parser = __commonJS({
       }
       return false;
     }
-    function isIgnoredMethodArg(path2, ignoreMethods) {
-      if (!ignoreMethods || ignoreMethods.length === 0) return false;
+    function isTranslatableMethodArg(path2, translateMethods) {
+      if (!translateMethods || translateMethods.length === 0) return false;
       const parent = path2.parent;
       if (parent.type === "CallExpression") {
         const callee = parent.callee;
         const fullName = getFullMethodName(callee);
-        if (fullName) {
-          if (ignoreMethods.includes(fullName)) return true;
-          const methodName = fullName.split(".").pop();
-          if (ignoreMethods.includes(methodName)) return true;
+        if (!fullName) return false;
+        if (translateMethods.includes(fullName)) return true;
+        for (const pattern of translateMethods) {
+          if (pattern.endsWith(".*")) {
+            const prefix = pattern.slice(0, -2);
+            if (fullName.startsWith(prefix + ".")) return true;
+          }
         }
+        return false;
       }
       return false;
+    }
+    function isInConditionalExpression(path2) {
+      let current = path2.parentPath;
+      while (current) {
+        if (current.node.type === "ConditionalExpression") return true;
+        current = current.parentPath;
+      }
+      return false;
+    }
+    function isMemberAssignmentTarget(path2) {
+      const parent = path2.parent;
+      if (parent.type === "AssignmentExpression" && parent.left && parent.left.type === "MemberExpression" && parent.right === path2.node) {
+        return true;
+      }
+      return false;
+    }
+    function isInCallExpression(path2) {
+      return path2.parent.type === "CallExpression";
     }
     function getFullMethodName(callee) {
       if (!callee) return null;
@@ -88597,7 +88624,7 @@ var require_vue_sfc_parser = __commonJS({
           try {
             const scriptResults = parseScript(
               scriptSource,
-              config.ignoreMethods,
+              config.translateMethods,
               scriptStartLine
             );
             scriptResults.forEach((r) => {
@@ -89841,6 +89868,56 @@ ${left} ${title} ${right}`);
         }
       };
     }
+    function tabCompletePath(input, baseDir) {
+      const normalized = input.replace(/\\/g, "/");
+      const lastSlash = normalized.lastIndexOf("/");
+      const dirPart = lastSlash >= 0 ? normalized.slice(0, lastSlash + 1) : "";
+      const partial = lastSlash >= 0 ? normalized.slice(lastSlash + 1) : normalized;
+      const resolvedDir = path2.resolve(baseDir, dirPart || ".");
+      if (!fs2.existsSync(resolvedDir)) {
+        return { matches: [], completed: input, commonPrefix: null };
+      }
+      let stat;
+      try {
+        stat = fs2.statSync(resolvedDir);
+      } catch {
+        return { matches: [], completed: input, commonPrefix: null };
+      }
+      if (!stat.isDirectory()) {
+        return { matches: [], completed: input, commonPrefix: null };
+      }
+      let entries;
+      try {
+        entries = fs2.readdirSync(resolvedDir);
+      } catch {
+        return { matches: [], completed: input, commonPrefix: null };
+      }
+      const matches = entries.filter((e) => e.startsWith(partial)).map((e) => {
+        try {
+          return fs2.statSync(path2.join(resolvedDir, e)).isDirectory() ? e + "/" : e;
+        } catch {
+          return e;
+        }
+      }).sort();
+      if (matches.length === 0) {
+        return { matches: [], completed: input, commonPrefix: null };
+      }
+      if (matches.length === 1) {
+        return { matches, completed: dirPart + matches[0], commonPrefix: null };
+      }
+      let commonLen = partial.length;
+      const first = matches[0];
+      while (commonLen < first.length) {
+        const ch = first[commonLen];
+        if (matches.every((m) => m[commonLen] === ch)) {
+          commonLen++;
+        } else {
+          break;
+        }
+      }
+      const commonPrefix = commonLen > partial.length ? dirPart + first.slice(0, commonLen) : null;
+      return { matches, completed: input, commonPrefix };
+    }
     function createPrompt() {
       let rl = null;
       function getRl() {
@@ -89866,6 +89943,31 @@ ${left} ${title} ${right}`);
           }
           const hint = defaultValue ? ` [${defaultValue}]` : "";
           getRl().question(`${title}${hint}: `, (answer) => {
+            resolve(answer.trim() || defaultValue || "");
+          });
+        });
+      }
+      function pathInput(title, description, defaultValue) {
+        return new Promise((resolve) => {
+          closeRl();
+          if (description) {
+            console.log(`  ${gray(description)}`);
+          }
+          const hint = defaultValue ? ` [${defaultValue}]` : "";
+          const promptText = `${title}${hint}: `;
+          const rl2 = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+            completer: (line) => {
+              const result = tabCompletePath(line, process.cwd());
+              if (result.matches.length === 0) {
+                return [[], line];
+              }
+              return [result.matches, line];
+            }
+          });
+          rl2.question(promptText, (answer) => {
+            rl2.close();
             resolve(answer.trim() || defaultValue || "");
           });
         });
@@ -90086,7 +90188,16 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       function close() {
         closeRl();
       }
-      return { input, secret, select, multiselect, editableList, confirm: confirm2, close };
+      return {
+        input,
+        pathInput,
+        secret,
+        select,
+        multiselect,
+        editableList,
+        confirm: confirm2,
+        close
+      };
     }
     function clearLines(count) {
       for (let i = 0; i < count; i++) {
@@ -90168,16 +90279,12 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       "trigger",
       "icon"
     ];
-    var DEFAULT_IGNORE_METHODS = [
-      "console.log",
-      "console.error",
-      "console.warn",
-      "console.info",
-      "openTag",
-      "indexOf",
-      "includes",
-      "split",
-      "toString"
+    var DEFAULT_TRANSLATE_METHODS = [
+      "ElMessage.*",
+      "ElMessageBox.*",
+      "ElNotification.*",
+      "alert",
+      "confirm"
     ];
     var AI_SYSTEM_PROMPT = `# \u89D2\u8272\u5B9A\u4E49
 \u4F60\u662F\u4E00\u4E2A\u4E25\u8C28\u7684 Vue \u9879\u76EE i18n \u56FD\u9645\u5316\u7FFB\u8BD1\u52A9\u624B\u3002\u4F60\u7684\u6838\u5FC3\u804C\u8D23\u662F\u63A5\u6536\u4E00\u6BB5\u6216\u591A\u6BB5\u4E2D\u6587\u6587\u672C\uFF0C\u5C06\u5176\u7FFB\u8BD1\u4E3A\u76EE\u6807\u8BED\u8A00\uFF0C\u5E76\u751F\u6210\u7ED3\u6784\u6E05\u6670\u3001\u8BED\u4E49\u51C6\u786E\u4E14\u7B26\u5408\u524D\u7AEF\u5DE5\u7A0B\u89C4\u8303\u7684 JSON \u6620\u5C04\u5BF9\u8C61\u3002
@@ -90271,8 +90378,8 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       {
         key: "projectPath",
         title: "\u9879\u76EE\u6839\u76EE\u5F55",
-        description: "\u9700\u8981\u56FD\u9645\u5316\u7684\u9879\u76EE\u6240\u5728\u76EE\u5F55\uFF0C\u76F8\u5BF9\u4E8E\u672C\u811A\u672C\u7684\u4F4D\u7F6E",
-        type: "input",
+        description: "\u9700\u8981\u56FD\u9645\u5316\u7684\u9879\u76EE\u6240\u5728\u76EE\u5F55\uFF0C\u76F8\u5BF9\u4E8E\u672C\u811A\u672C\u7684\u4F4D\u7F6E\uFF08Tab \u8865\u5168\u8DEF\u5F84\uFF09",
+        type: "path",
         default: "./"
       },
       {
@@ -90336,11 +90443,11 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         default: DEFAULT_IGNORE_ATTRIBUTES
       },
       {
-        key: "ignoreMethods",
-        title: "\u8DF3\u8FC7\u7684\u65B9\u6CD5\u5B57\u7B26\u4E32\u53C2\u6570",
-        description: "\u8FD9\u4E9B\u65B9\u6CD5\u8C03\u7528\u4E2D\u7684\u5B57\u7B26\u4E32\u53C2\u6570\u4E0D\u7FFB\u8BD1",
+        key: "translateMethods",
+        title: "\u9700\u8981\u7FFB\u8BD1\u7684\u65B9\u6CD5\u8C03\u7528",
+        description: "\u53EA\u6709\u8FD9\u4E9B\u65B9\u6CD5\u8C03\u7528\u4E2D\u7684\u5B57\u7B26\u4E32\u53C2\u6570\u4F1A\u88AB\u7FFB\u8BD1\uFF08\u652F\u6301\u901A\u914D\u7B26\u5982 ElMessage.*\uFF09",
         type: "editableList",
-        default: DEFAULT_IGNORE_METHODS
+        default: DEFAULT_TRANSLATE_METHODS
       },
       {
         key: "localeStorageKey",
@@ -90481,8 +90588,8 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       nested.ignoreAttributes = ensureArray(
         nested.ignoreAttributes || DEFAULT_IGNORE_ATTRIBUTES
       );
-      nested.ignoreMethods = ensureArray(
-        nested.ignoreMethods || DEFAULT_IGNORE_METHODS
+      nested.translateMethods = ensureArray(
+        nested.translateMethods || DEFAULT_TRANSLATE_METHODS
       );
       const ai = nested.ai || {};
       const lines = [];
@@ -90521,8 +90628,8 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       lines.push("  // \u6C38\u8FDC\u4E0D\u7FFB\u8BD1\u7684\u5C5E\u6027");
       lines.push(`  ignoreAttributes: ${JSON.stringify(nested.ignoreAttributes)},`);
       lines.push("");
-      lines.push("  // \u8DF3\u8FC7\u8FD9\u4E9B\u65B9\u6CD5\u7684\u5B57\u7B26\u4E32\u53C2\u6570");
-      lines.push(`  ignoreMethods: ${JSON.stringify(nested.ignoreMethods)},`);
+      lines.push("  // \u9700\u8981\u7FFB\u8BD1\u7684\u65B9\u6CD5\u8C03\u7528\uFF08\u767D\u540D\u5355\uFF0C\u652F\u6301\u901A\u914D\u7B26\u5982 ElMessage.*\uFF09");
+      lines.push(`  translateMethods: ${JSON.stringify(nested.translateMethods)},`);
       lines.push("");
       lines.push("  // key \u547D\u540D\u98CE\u683C");
       lines.push(`  keyStyle: ${JSON.stringify(nested.keyStyle || "camelCase")},`);
@@ -90682,6 +90789,8 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       switch (item.type) {
         case "input":
           return await prompt.input("", item.description, String(defaultValue));
+        case "path":
+          return await prompt.pathInput("", item.description, String(defaultValue));
         case "select":
           return await prompt.select(
             "",
@@ -90746,8 +90855,8 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
           Array.isArray(config.ignoreAttributes) ? `${config.ignoreAttributes.length} \u9879` : "(\u65E0)"
         ],
         [
-          "\u5FFD\u7565\u65B9\u6CD5",
-          Array.isArray(config.ignoreMethods) ? `${config.ignoreMethods.length} \u9879` : "(\u65E0)"
+          "\u7FFB\u8BD1\u65B9\u6CD5",
+          Array.isArray(config.translateMethods) ? `${config.translateMethods.length} \u9879` : "(\u65E0)"
         ],
         ["\u5B58\u50A8\u952E\u540D", config.localeStorageKey],
         ["AI \u7FFB\u8BD1", config["ai.enabled"] ? "\u542F\u7528" : "\u7981\u7528"]
@@ -90827,7 +90936,13 @@ function normalizeConfig(config) {
     localeStorageKey: config.localeStorageKey || "lang",
     translateAttributes: config.translateAttributes || [],
     ignoreAttributes: config.ignoreAttributes || [],
-    ignoreMethods: config.ignoreMethods || [],
+    translateMethods: config.translateMethods || [
+      "ElMessage.*",
+      "ElMessageBox.*",
+      "ElNotification.*",
+      "alert",
+      "confirm"
+    ],
     logDir: config.logDir || "logs",
     ai: config.ai || { enabled: false }
   };
@@ -90919,8 +91034,31 @@ async function runInteractiveFlow() {
     console.log("\u5DF2\u9000\u51FA");
     return;
   }
+  let aiTranslated = false;
+  if (config.ai && config.ai.enabled) {
+    console.log("");
+    printSeparator("\u6B65\u9AA4 2/4: AI \u7FFB\u8BD1");
+    if (!config.ai.apiKey) {
+      console.log("AI \u7FFB\u8BD1\u5DF2\u542F\u7528\u4F46\u672A\u914D\u7F6E API Key\uFF0C\u8DF3\u8FC7");
+    } else {
+      const wantTranslate = await confirm(
+        "\n\u68C0\u6D4B\u5230 AI \u7FFB\u8BD1\u5DF2\u914D\u7F6E\uFF0C\u662F\u5426\u8FDB\u884C AI \u7FFB\u8BD1\uFF1F"
+      );
+      if (wantTranslate) {
+        await translateViaAI(config, PROJECT_ROOT);
+        aiTranslated = true;
+      } else {
+        console.log("\u8DF3\u8FC7 AI \u7FFB\u8BD1");
+      }
+    }
+    if (!await confirm("\n\u662F\u5426\u7EE7\u7EED\uFF1F")) {
+      console.log("\u5DF2\u9000\u51FA");
+      return;
+    }
+  }
+  const stepNum = config.ai && config.ai.enabled ? "3/4" : "2/3";
   console.log("");
-  printSeparator("\u6B65\u9AA4 2/4: \u626B\u63CF\u9884\u89C8");
+  printSeparator(`\u6B65\u9AA4 ${stepNum}: \u626B\u63CF\u9884\u89C8`);
   const {
     fileGroups,
     matched,
@@ -90941,28 +91079,9 @@ async function runInteractiveFlow() {
     console.log("\u5DF2\u9000\u51FA");
     return;
   }
-  if (config.ai && config.ai.enabled) {
-    console.log("");
-    printSeparator("\u6B65\u9AA4 3/4: AI \u7FFB\u8BD1");
-    if (!config.ai.apiKey) {
-      console.log("AI \u7FFB\u8BD1\u5DF2\u542F\u7528\u4F46\u672A\u914D\u7F6E API Key\uFF0C\u8DF3\u8FC7");
-    } else {
-      const wantTranslate = await confirm(
-        "\n\u68C0\u6D4B\u5230 AI \u7FFB\u8BD1\u5DF2\u914D\u7F6E\uFF0C\u662F\u5426\u8FDB\u884C AI \u7FFB\u8BD1\uFF1F"
-      );
-      if (wantTranslate) {
-        await translateViaAI(config, PROJECT_ROOT);
-      } else {
-        console.log("\u8DF3\u8FC7 AI \u7FFB\u8BD1");
-      }
-    }
-    if (!await confirm("\n\u662F\u5426\u7EE7\u7EED\uFF1F")) {
-      console.log("\u5DF2\u9000\u51FA");
-      return;
-    }
-  }
+  const replaceStepNum = config.ai && config.ai.enabled ? "4/4" : "3/3";
   console.log("");
-  printSeparator("\u6B65\u9AA4 " + (config.ai && config.ai.enabled ? "4/4" : "3/3") + ": \u6267\u884C\u66FF\u6362");
+  printSeparator(`\u6B65\u9AA4 ${replaceStepNum}: \u6267\u884C\u66FF\u6362`);
   const wantReplace = await confirm(
     "\n\u4EE5\u4E0A\u5339\u914D\u9879\u5C06\u88AB\u66FF\u6362\u4E3A $t() \u8C03\u7528\uFF0C\u662F\u5426\u6267\u884C\uFF1F"
   );
