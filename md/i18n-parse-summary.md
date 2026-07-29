@@ -55,7 +55,23 @@
 
 替换规则：表达式中的 `'中文'` → `$t('key')`
 
-#### 3. 文本内容 → `text-content`
+#### 3. 动态属性中的模板字符串 → `template-literal`
+
+`:attrName` 表达式包含模板字符串 `` `...${...}...` ``，属性名在白名单中。
+
+```html
+<!-- 替换前 -->
+<el-input :label="`共${total}条记录`" />
+<el-select :placeholder="`请选择${name}`" />
+
+<!-- 替换后 -->
+<el-input :label="`${$t('common.total')}${total}${$t('common.records')}`" />
+<el-select :placeholder="`${$t('common.pleaseSelect')}${name}`" />
+```
+
+替换规则：整体重建模板字符串，静态中文部分替换为 `${$t('key')}`，变量 `${expr}` 原样保留。
+
+#### 4. 文本内容 → `text-content`
 
 HTML 标签之间的纯文本节点，包含中文。
 
@@ -73,7 +89,7 @@ HTML 标签之间的纯文本节点，包含中文。
 
 替换规则：`中文文本` → `{{ $t('key') }}`
 
-#### 4. 插值表达式 → `interpolation`
+#### 5. 插值表达式 → `interpolation`
 
 `{{ }}` 中包含中文字符串，且不是已有的 `$t()` 调用。
 
@@ -124,13 +140,13 @@ HTML 标签之间的纯文本节点，包含中文。
 
 **建议**：引入 `组件.属性` 级别的精确配置，如 `!el-radio.label` 排除特定组件的属性。
 
-#### 2. 模板字符串含变量插值未标记为特殊（高风险）
+#### 2. ~~模板字符串含变量插值未标记为特殊~~（已解决）
 
 ```html
 :label="`共${total}条记录`"
 ```
 
-当前 `extractChineseFromExpression` 会提取静态部分 `共条记录` 当作普通文本处理，而不是像 script 解析器那样标记为 `special-template-literal`。翻译后变量丢失。
+已通过 `extractTemplateLiterals()` 处理：解析 quasis/expressions，生成 `template-literal` 类型结果，replacer 整体重建为 `` `${$t('key1')}${total}${$t('key2')}` ``。
 
 #### 3. 字符串拼接未标记为特殊（中风险）
 
@@ -200,7 +216,6 @@ HTML 标签之间的纯文本节点，包含中文。
 
 | 优先级 | 问题 | 建议方案 |
 |--------|------|----------|
-| **高** | 模板字符串含变量插值未标记为特殊 | 对齐 script 解析器逻辑，标记为 `special-template-literal` |
 | **高** | 字符串拼接未标记为特殊 | 对齐 script 解析器逻辑，标记为 `special-string-concat` |
 | **高** | 属性名相同但组件语义不同 | 支持 `组件.属性` 级别配置，如 `!el-radio.label` |
 | **中** | `v-text` / `v-html` 未处理 | 增加对 `text` 和 `html` 指令的处理 |

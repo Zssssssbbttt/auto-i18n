@@ -11,8 +11,8 @@
 function printSeparator(title, width = 60) {
   if (title) {
     const len = title.length
-    const left = Math.floor((width - len - 2) / 2)
-    const right = width - len - 2 - left
+    const left = Math.max(0, Math.floor((width - len - 2) / 2))
+    const right = Math.max(0, width - len - 2 - left)
     console.log(`${'='.repeat(left)} ${title} ${'='.repeat(right)}`)
   } else {
     console.log('='.repeat(width))

@@ -6,26 +6,26 @@
  * 用法: node scripts/i18n-scan/init.cjs
  */
 
-const path = require('path')
-const fs = require('fs')
+const path = require("path");
+const fs = require("fs");
 
 // 脚本所在目录（配置文件 i18n.config.js 位于同级目录）
-const SCRIPT_DIR = __dirname
+const SCRIPT_DIR = __dirname;
 
 /**
  * 加载配置文件
  */
 async function loadConfig() {
   // 配置文件始终与脚本同级
-  const configPath = path.join(SCRIPT_DIR, 'i18n.config.js')
+  const configPath = path.join(SCRIPT_DIR, "i18n.config.js");
   try {
-    const configUrl = `file://${configPath.replace(/\\/g, '/')}`
-    const mod = await import(configUrl)
-    return mod.default || mod
+    const configUrl = `file://${configPath.replace(/\\/g, "/")}`;
+    const mod = await import(configUrl);
+    return mod.default || mod;
   } catch (err) {
-    console.error(`无法加载配置文件: ${configPath}`)
-    console.error(err.message)
-    process.exit(1)
+    console.error(`无法加载配置文件: ${configPath}`);
+    console.error(err.message);
+    process.exit(1);
   }
 }
 
@@ -35,41 +35,51 @@ async function loadConfig() {
  * @param {string} projectRoot - 项目根目录
  */
 async function runInit(config, projectRoot) {
-  const outputDir = path.resolve(projectRoot, config.output || 'src/locales')
-  const sourceLang = config.sourceLanguage || 'zh-CN'
-  const targetLangs = config.targetLanguages || ['en']
-  const storageKey = config.localeStorageKey || 'lang'
+  const outputDir = path.resolve(projectRoot, config.output || "src/locales");
+  const sourceLang = config.sourceLanguage || "zh-CN";
+  const targetLangs = config.targetLanguages || ["en"];
+  const storageKey = config.localeStorageKey || "lang";
 
   // 确保目录存在
   if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true })
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  // 移动端：检查并补全 tsconfig.json 的 resolveJsonModule
+  if (config.isMobile) {
+    ensureResolveJsonModule(projectRoot);
   }
 
   // 创建源语言空文件
-  const sourceFile = path.join(outputDir, `${sourceLang}.json`)
+  const sourceFile = path.join(outputDir, `${sourceLang}.json`);
   if (!fs.existsSync(sourceFile)) {
-    fs.writeFileSync(sourceFile, '{}\n', 'utf-8')
-    console.log(`  创建: ${sourceLang}.json`)
+    fs.writeFileSync(sourceFile, "{}\n", "utf-8");
+    console.log(`  创建: ${sourceLang}.json`);
   } else {
-    console.log(`  跳过: ${sourceLang}.json（已存在）`)
+    console.log(`  跳过: ${sourceLang}.json（已存在）`);
   }
 
   // 创建目标语言空文件
   for (const lang of targetLangs) {
-    if (lang === sourceLang) continue
-    const targetFile = path.join(outputDir, `${lang}.json`)
+    if (lang === sourceLang) continue;
+    const targetFile = path.join(outputDir, `${lang}.json`);
     if (!fs.existsSync(targetFile)) {
-      fs.writeFileSync(targetFile, '{}\n', 'utf-8')
-      console.log(`  创建: ${lang}.json`)
+      fs.writeFileSync(targetFile, "{}\n", "utf-8");
+      console.log(`  创建: ${lang}.json`);
     } else {
-      console.log(`  跳过: ${lang}.json（已存在）`)
+      console.log(`  跳过: ${lang}.json（已存在）`);
     }
   }
 
   // 创建 index.ts（i18n 配置 + $t 导出 + Element Plus 集成）
-  const indexFile = path.join(outputDir, 'index.ts')
+  const indexFile = path.join(outputDir, "index.ts");
   if (!fs.existsSync(indexFile)) {
-    const indexContent = `import { createI18n } from 'vue-i18n'
+    const isMobile = config.isMobile || false;
+    let indexContent;
+
+    if (!isMobile) {
+      // PC 端：含 Element Plus locale 集成
+      indexContent = `import { createI18n } from 'vue-i18n'
 import { i18nTypeToString } from './typeToString'
 import { ref, watch } from 'vue'
 import { localeContextKey } from 'element-plus'
@@ -123,15 +133,42 @@ export function setupI18n(app: any) {
   app.config.globalProperties.$t = i18n.global.t
   app.config.globalProperties.i18nTypeToString = i18nTypeToString
 }
-`
-    fs.writeFileSync(indexFile, indexContent, 'utf-8')
-    console.log(`  创建: index.ts`)
+`;
+    } else {
+      // 移动端：不含 Element Plus，精简模板
+      indexContent = `import { createI18n } from 'vue-i18n'
+import zhCN from './zh-CN.json'
+import en from './en.json'
+
+const i18n = createI18n({
+  legacy: false,
+  locale: localStorage.getItem('${storageKey}') || 'zh-CN',
+  messages: {
+    'zh-CN': zhCN,
+    en: en,
+  },
+  silentTranslationWarn: true,
+})
+
+export const $t = i18n.global.t
+
+export default i18n
+
+export function setupI18n(app: any) {
+  app.use(i18n)
+  app.config.globalProperties.$t = i18n.global.t
+}
+`;
+    }
+
+    fs.writeFileSync(indexFile, indexContent, "utf-8");
+    console.log(`  创建: index.ts`);
   } else {
-    console.log(`  跳过: index.ts（已存在）`)
+    console.log(`  跳过: index.ts（已存在）`);
   }
 
   // 创建 typeToString.ts
-  const typeToStringFile = path.join(outputDir, 'typeToString.ts')
+  const typeToStringFile = path.join(outputDir, "typeToString.ts");
   if (!fs.existsSync(typeToStringFile)) {
     const typeToStringContent = `import i18n from './index'
 
@@ -143,15 +180,15 @@ export function i18nTypeToString(key: string): string {
   const result = i18n.global.t(key)
   return typeof result === 'string' ? result : String(result)
 }
-`
-    fs.writeFileSync(typeToStringFile, typeToStringContent, 'utf-8')
-    console.log(`  创建: typeToString.ts`)
+`;
+    fs.writeFileSync(typeToStringFile, typeToStringContent, "utf-8");
+    console.log(`  创建: typeToString.ts`);
   } else {
-    console.log(`  跳过: typeToString.ts（已存在）`)
+    console.log(`  跳过: typeToString.ts（已存在）`);
   }
 
   // 创建 useI18n composable
-  const composableFile = path.join(outputDir, 'useI18n.ts')
+  const composableFile = path.join(outputDir, "useI18n.ts");
   if (!fs.existsSync(composableFile)) {
     const composableContent = `import i18n from './index'
 
@@ -163,123 +200,195 @@ export function i18nTypeToString(key: string): string {
 export function useI18n() {
   return { t: i18n.global.t }
 }
-`
-    fs.writeFileSync(composableFile, composableContent, 'utf-8')
-    console.log(`  创建: useI18n.ts`)
+`;
+    fs.writeFileSync(composableFile, composableContent, "utf-8");
+    console.log(`  创建: useI18n.ts`);
   } else {
-    console.log(`  跳过: useI18n.ts（已存在）`)
+    console.log(`  跳过: useI18n.ts（已存在）`);
   }
 
   // 更新 main.ts 中的 i18n 引入路径
-  updateMainTs(projectRoot)
+  updateMainTs(projectRoot);
 
-  console.log('\n初始化完成')
+  console.log("\n初始化完成");
 }
 
 /**
  * CLI 入口（独立运行时）
  */
 async function main() {
-  const config = await loadConfig()
-  const projectRoot = path.resolve(config.projectPath || SCRIPT_DIR)
-  await runInit(config, projectRoot)
+  const config = await loadConfig();
+  const projectRoot = path.resolve(config.projectPath || SCRIPT_DIR);
+  await runInit(config, projectRoot);
 }
 
 /**
  * 更新 main.ts：补全 i18n 引入、全局 $t 注册、app.use(i18n)
  */
 function updateMainTs(projectRoot) {
-  const mainFile = path.join(projectRoot, 'src', 'main.ts')
+  const mainFile = path.join(projectRoot, "src", "main.ts");
   if (!fs.existsSync(mainFile)) {
-    console.log('  警告: 未找到 src/main.ts，跳过引入路径更新')
-    return
+    console.log("  警告: 未找到 src/main.ts，跳过引入路径更新");
+    return;
   }
 
-  let content = fs.readFileSync(mainFile, 'utf-8')
-  const newImport = "import i18n, { $t } from './locales'"
-  let changed = false
+  let content = fs.readFileSync(mainFile, "utf-8");
+  const newImport = "import i18n, { $t } from './locales'";
+  let changed = false;
 
   // 1. 处理 import 引入
   if (content.includes(newImport)) {
-    console.log('  跳过: main.ts 引入路径已正确')
+    console.log("  跳过: main.ts 引入路径已正确");
   } else {
     // 完全没有 i18n 引入，自动补上
-    const lines = content.split('\n')
-    let lastImportLine = -1
+    const lines = content.split("\n");
+    let lastImportLine = -1;
     for (let i = 0; i < lines.length; i++) {
       if (/^import\s+.+/.test(lines[i].trim())) {
-        lastImportLine = i
+        lastImportLine = i;
       }
     }
     if (lastImportLine >= 0) {
-      lines.splice(lastImportLine + 1, 0, newImport)
-      content = lines.join('\n')
-      console.log('  新增: main.ts 添加 i18n 引入')
-      changed = true
+      lines.splice(lastImportLine + 1, 0, newImport);
+      content = lines.join("\n");
+      console.log("  新增: main.ts 添加 i18n 引入");
+      changed = true;
     } else {
-      console.log('  警告: main.ts 中未找到 import 语句，请手动添加 i18n 引入')
+      console.log("  警告: main.ts 中未找到 import 语句，请手动添加 i18n 引入");
     }
   }
 
   // 2. 检查并补全全局 $t 注册
-  const globalTLine = 'app.config.globalProperties.$t = $t'
+  const globalTLine = "app.config.globalProperties.$t = $t";
   if (!content.includes(globalTLine)) {
-    const lines = content.split('\n')
-    let inserted = false
+    const lines = content.split("\n");
+    let inserted = false;
     for (let i = 0; i < lines.length; i++) {
-      if (/^const\s+app\s*=\s*createApp/.test(lines[i].trim())) {
+      if (/^\s*(?:const\s+)?app\s*=\s*createApp/.test(lines[i].trim())) {
         lines.splice(
           i + 1,
           0,
-          '',
+          "",
           `// 全局注册 $t，模板中可直接使用`,
-          globalTLine
-        )
-        content = lines.join('\n')
-        console.log('  新增: main.ts 添加全局 $t 注册')
-        changed = true
-        inserted = true
-        break
+          globalTLine,
+        );
+        content = lines.join("\n");
+        console.log("  新增: main.ts 添加全局 $t 注册");
+        changed = true;
+        inserted = true;
+        break;
       }
     }
     if (!inserted) {
-      console.log('  警告: 未找到 createApp，请手动添加全局 $t 注册')
+      console.log("  警告: 未找到 createApp，请手动添加全局 $t 注册");
     }
   } else {
-    console.log('  跳过: main.ts 全局 $t 注册已存在')
+    console.log("  跳过: main.ts 全局 $t 注册已存在");
   }
 
-  // 3. 检查并补全 app.use(i18n)
-  if (!content.includes('.use(i18n)')) {
-    const lines = content.split('\n')
-    let inserted = false
+  // 3. 检查并补全 app.use(i18n)，插入到 .mount( 之前的链式调用中
+  if (!content.includes(".use(i18n)")) {
+    const lines = content.split("\n");
+    let inserted = false;
+
     for (let i = 0; i < lines.length; i++) {
-      if (/\.mount\(/.test(lines[i].trim())) {
-        lines.splice(i, 0, 'app.use(i18n)')
-        content = lines.join('\n')
-        console.log('  新增: main.ts 添加 app.use(i18n)')
-        changed = true
-        inserted = true
-        break
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // 跳过注释行
+      if (trimmed.startsWith("//") || trimmed.startsWith("/*")) continue;
+
+      const mountIdx = line.indexOf(".mount(");
+      if (mountIdx === -1) continue;
+
+      // .mount( 之前的内容（去掉尾部空白）
+      const beforeMount = line.slice(0, mountIdx).trimEnd();
+
+      if (!beforeMount) {
+        // 模式 A: 缩进续行 — 行首只有空白，然后是 .mount(
+        //   app
+        //     .use(router)
+        //     .mount('#app')
+        // → 提取缩进，插入 .use(i18n) 到上一行
+        const indent = line.slice(0, line.length - line.trimStart().length);
+        lines.splice(i, 0, `${indent}.use(i18n)`);
+      } else if (beforeMount.endsWith(")")) {
+        // 模式 B: 同行链式调用 — .mount( 前有 ).use() 等链式调用
+        //   app.use(router).mount('#app')
+        //   createApp(App).use(router).mount('#app')
+        // → 在 .mount( 前插入 .use(i18n)
+        lines[i] = beforeMount + ".use(i18n)" + line.slice(mountIdx);
+      } else {
+        // 模式 C: 独立调用 — 行首是变量名.mount(
+        //   app.mount('#app')
+        // → 提取变量名和缩进，插入独立调用行
+        const indent = line.slice(0, line.length - line.trimStart().length);
+        const varName = beforeMount.trim();
+        lines.splice(i, 0, `${indent}${varName}.use(i18n)`);
       }
+
+      content = lines.join("\n");
+      console.log("  新增: main.ts 添加 app.use(i18n)");
+      changed = true;
+      inserted = true;
+      break;
     }
+
     if (!inserted) {
-      console.log('  警告: 未找到 mount，请手动添加 app.use(i18n)')
+      console.log("  警告: 未找到 .mount(，请手动添加 app.use(i18n)");
     }
   } else {
-    console.log('  跳过: main.ts app.use(i18n) 已存在')
+    console.log("  跳过: main.ts app.use(i18n) 已存在");
   }
 
   if (changed) {
-    fs.writeFileSync(mainFile, content, 'utf-8')
+    fs.writeFileSync(mainFile, content, "utf-8");
   }
 }
 
-module.exports = { runInit }
+/**
+ * 检查并补全 tsconfig.json 的 resolveJsonModule 选项
+ * 移动端项目默认未开启，但 locales/index.ts 需要 import JSON 文件
+ * @param {string} projectRoot - 项目根目录
+ */
+function ensureResolveJsonModule(projectRoot) {
+  const tsconfigPath = path.join(projectRoot, "tsconfig.json");
+  if (!fs.existsSync(tsconfigPath)) {
+    console.log("  警告: 未找到 tsconfig.json，跳过 resolveJsonModule 检查");
+    return;
+  }
+
+  let tsconfig;
+  try {
+    tsconfig = JSON.parse(fs.readFileSync(tsconfigPath, "utf-8"));
+  } catch (err) {
+    console.log(`  警告: tsconfig.json 解析失败: ${err.message}`);
+    return;
+  }
+
+  if (!tsconfig.compilerOptions) {
+    tsconfig.compilerOptions = {};
+  }
+
+  if (tsconfig.compilerOptions.resolveJsonModule === true) {
+    console.log("  跳过: tsconfig.json resolveJsonModule 已开启");
+    return;
+  }
+
+  tsconfig.compilerOptions.resolveJsonModule = true;
+  fs.writeFileSync(
+    tsconfigPath,
+    JSON.stringify(tsconfig, null, 2) + "\n",
+    "utf-8",
+  );
+  console.log("  新增: tsconfig.json 添加 resolveJsonModule: true");
+}
+
+module.exports = { runInit };
 
 if (require.main === module) {
   main().catch((err) => {
-    console.error('初始化失败:', err)
-    process.exit(1)
-  })
+    console.error("初始化失败:", err);
+    process.exit(1);
+  });
 }

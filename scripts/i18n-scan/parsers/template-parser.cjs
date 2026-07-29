@@ -252,18 +252,33 @@ function handleDirective(
   if (prop.exp) {
     const expression = getExpressionContent(prop.exp)
     if (expression && hasChinese(expression)) {
-      const chineseStrings = extractChineseFromExpression(expression)
       const line = getLine(prop.exp.loc || prop.loc, lineOffset)
 
-      chineseStrings.forEach((chineseText) => {
-        results.push({
-          line,
-          chineseText,
-          type: 'dynamic-attr',
-          attrName,
-          context: getSourceLine(element.loc, lineOffset),
+      // 处理模板字符串：`共${total}条记录`
+      const templateItems = extractTemplateLiterals(
+        expression,
+        prop.exp.loc,
+        line,
+        attrName,
+        element,
+        lineOffset
+      )
+      results.push(...templateItems)
+
+      // 处理普通字符串（排除已处理的模板字符串部分）
+      const expressionWithoutTemplates = expression.replace(/`[^`]*`/g, '')
+      if (hasChinese(expressionWithoutTemplates)) {
+        const chineseStrings = extractChineseFromExpression(expressionWithoutTemplates)
+        chineseStrings.forEach((chineseText) => {
+          results.push({
+            line,
+            chineseText,
+            type: 'dynamic-attr',
+            attrName,
+            context: getSourceLine(element.loc, lineOffset),
+          })
         })
-      })
+      }
     }
   }
 }
@@ -406,6 +421,59 @@ function getSourceLine(loc, lineOffset) {
     return loc.source
   }
   return ''
+}
+
+/**
+ * 从表达式中提取模板字符串，生成 template-literal 类型结果
+ * 例如：`共${total}条记录` → 解析 quasis=['共','条记录'] expressions=['total']
+ * 返回结构化数据供 replacer 整体重建
+ */
+function extractTemplateLiterals(expression, expLoc, line, attrName, element, lineOffset) {
+  const results = []
+
+  // 只匹配包含插值的模板字符串
+  const templateRegex = /`([^`]*)`/g
+  let match
+  while ((match = templateRegex.exec(expression)) !== null) {
+    const templateContent = match[1]
+    // 只处理含插值且含中文的模板字符串
+    if (!/\$\{/.test(templateContent)) continue
+    if (!hasChinese(templateContent)) continue
+
+    // 解析 quasis 和 expressions
+    const parts = templateContent.split(/\$\{([^}]*)\}/)
+    const quasis = []
+    const expressions = []
+    for (let i = 0; i < parts.length; i++) {
+      if (i % 2 === 0) {
+        quasis.push(parts[i])
+      } else {
+        expressions.push(parts[i])
+      }
+    }
+
+    const templateStartCol = expLoc.start.column + match.index
+    const templateEndCol = templateStartCol + match[0].length - 1
+
+    quasis.forEach((quasi, idx) => {
+      if (hasChinese(quasi)) {
+        results.push({
+          line,
+          chineseText: quasi.trim(),
+          type: 'template-literal',
+          attrName,
+          quasiIndex: idx,
+          templateStartCol,
+          templateEndCol,
+          quasis,
+          expressions,
+          context: getSourceLine(element.loc, lineOffset),
+        })
+      }
+    })
+  }
+
+  return results
 }
 
 module.exports = { parseTemplate }

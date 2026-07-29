@@ -605,6 +605,11 @@ const DEFAULT_TRANSLATE_METHODS = [
   "confirm",
 ];
 
+const DEFAULT_TRANSLATE_METHODS_MOBILE = [
+  "Toast",
+  "Toast.*",
+];
+
 const AI_SYSTEM_PROMPT = `# 角色定义
 你是一个严谨的 Vue 项目 i18n 国际化翻译助手。你的核心职责是接收一段或多段中文文本，将其翻译为目标语言，并生成结构清晰、语义准确且符合前端工程规范的 JSON 映射对象。
 
@@ -714,14 +719,6 @@ const REQUIRED_ITEMS = [
     default: "./",
   },
   {
-    key: "entry",
-    title: "扫描范围",
-    description:
-      "要扫描哪些文件。src/**/*.vue 表示 src 下所有 .vue 文件，src/**/*.{vue,js,ts} 表示 src 下所有 vue/js/ts 文件",
-    type: "input",
-    default: "src/**/*.vue",
-  },
-  {
     key: "sourceLanguage",
     title: "源码语言",
     description: "项目中当前使用的语言",
@@ -749,13 +746,6 @@ const REQUIRED_ITEMS = [
 // 主流程项（必答之后，AI 配置之前）
 const MAIN_ITEMS = [
   {
-    key: "exclude",
-    title: "排除文件",
-    description: "不需要扫描的文件",
-    type: "editableList",
-    default: ["src/router.ts", "src/utils/*.ts", "src/views/print.vue"],
-  },
-  {
     key: "scanScript",
     title: "扫描 <script> 中的中文",
     description: "是否扫描 Vue 文件 <script> 部分的中文",
@@ -770,25 +760,11 @@ const MAIN_ITEMS = [
     default: true,
   },
   {
-    key: "translateAttributes",
-    title: "需要翻译的 HTML 属性",
-    description: "这些属性中的中文会被提取翻译",
-    type: "editableList",
-    default: DEFAULT_TRANSLATE_ATTRIBUTES,
-  },
-  {
-    key: "ignoreAttributes",
-    title: "不翻译的 HTML 属性",
-    description: "这些属性中的中文永远不翻译",
-    type: "editableList",
-    default: DEFAULT_IGNORE_ATTRIBUTES,
-  },
-  {
-    key: "translateMethods",
-    title: "需要翻译的方法调用",
-    description: "只有这些方法调用中的字符串参数会被翻译（支持通配符如 ElMessage.*）",
-    type: "editableList",
-    default: DEFAULT_TRANSLATE_METHODS,
+    key: "isMobile",
+    title: "是否为移动端项目？",
+    description: "移动端项目使用 Vant UI，生成的 locales/index.ts 不含 Element Plus 依赖，默认方法白名单使用 Toast",
+    type: "confirm",
+    default: false,
   },
   {
     key: "localeStorageKey",
@@ -994,6 +970,9 @@ function writeConfig(flat, configPath) {
   lines.push("  // 是否替换变量声明赋值中的中文");
   lines.push(`  scanScriptDeclarations: ${nested.scanScriptDeclarations !== false},`);
   lines.push("");
+  lines.push("  // 是否为移动端项目（移动端生成的 index.ts 不含 Element Plus）");
+  lines.push(`  isMobile: ${nested.isMobile === true},`);
+  lines.push("");
   lines.push("  // 输出目录");
   lines.push(`  output: ${JSON.stringify(nested.output || "src/locales")},`);
   lines.push(`  baseDir: ${JSON.stringify(nested.baseDir || "src")},`);
@@ -1119,7 +1098,7 @@ async function runSetup(existingConfig, configPath) {
     console.log("");
 
     for (const item of MAIN_ITEMS) {
-      const defaultValue = getConfigValue(
+      let defaultValue = getConfigValue(
         existingConfig,
         item.key,
         item.default,
@@ -1138,6 +1117,24 @@ async function runSetup(existingConfig, configPath) {
       console.log(`  → ${green(formatValue(value, item.type))}`);
       console.log("");
     }
+
+    // 以下项使用默认值，不逐项询问，可在 i18n.config.js 中手动修改
+    newConfig.entry = getConfigValue(
+      existingConfig, 'entry', ['src/**/*.vue']
+    );
+    newConfig.exclude = getConfigValue(
+      existingConfig, 'exclude', []
+    );
+    newConfig.translateAttributes = getConfigValue(
+      existingConfig, 'translateAttributes', DEFAULT_TRANSLATE_ATTRIBUTES
+    );
+    newConfig.ignoreAttributes = getConfigValue(
+      existingConfig, 'ignoreAttributes', DEFAULT_IGNORE_ATTRIBUTES
+    );
+    newConfig.translateMethods = getConfigValue(
+      existingConfig, 'translateMethods',
+      newConfig.isMobile ? DEFAULT_TRANSLATE_METHODS_MOBILE : DEFAULT_TRANSLATE_METHODS
+    );
 
     // ---- AI 条件项 ----
     if (newConfig["ai.enabled"]) {
@@ -1164,39 +1161,13 @@ async function runSetup(existingConfig, configPath) {
       }
     }
 
-    // ---- 高级配置 ----
-    console.log(bold("--- 高级配置 ---"));
-    console.log("");
-    const showAdvanced = await prompt.confirm(
-      "是否修改高级配置？",
-      null,
-      false,
-    );
-
-    if (showAdvanced) {
-      console.log("");
-      for (const item of ADVANCED_ITEMS) {
-        const defaultValue = getConfigValue(
-          existingConfig,
-          item.key,
-          item.default,
-        );
-
-        console.log(`${bold(item.title)}`);
-
-        const value = await askItem(prompt, item, defaultValue, existingConfig);
-        newConfig[item.key] = value;
-        console.log(`  → ${green(formatValue(value, item.type))}`);
-        console.log("");
-      }
-    } else {
-      for (const item of ADVANCED_ITEMS) {
-        newConfig[item.key] = getConfigValue(
-          existingConfig,
-          item.key,
-          item.default,
-        );
-      }
+    // ---- 高级配置（使用默认值，可在 i18n.config.js 中手动修改） ----
+    for (const item of ADVANCED_ITEMS) {
+      newConfig[item.key] = getConfigValue(
+        existingConfig,
+        item.key,
+        item.default,
+      );
     }
 
     // ---- 配置摘要 ----
@@ -1292,6 +1263,7 @@ function printSummary(config) {
     ...(config.scanScript !== false
       ? [["替换变量声明", config.scanScriptDeclarations !== false ? "是" : "否"]]
       : []),
+    ["移动端项目", config.isMobile ? "是" : "否"],
     ["源码语言", config.sourceLanguage],
     [
       "目标语言",

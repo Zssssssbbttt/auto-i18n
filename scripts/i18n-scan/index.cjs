@@ -69,6 +69,7 @@ async function loadConfig() {
  * @returns {object} 规范化后的配置
  */
 function normalizeConfig(config) {
+  const isMobile = config.isMobile !== undefined ? config.isMobile : false
   return {
     projectPath: config.projectPath || ".",
     scanScript: config.scanScript !== undefined ? config.scanScript : true,
@@ -81,15 +82,14 @@ function normalizeConfig(config) {
     localeStorageKey: config.localeStorageKey || "lang",
     translateAttributes: config.translateAttributes || [],
     ignoreAttributes: config.ignoreAttributes || [],
-    translateMethods: config.translateMethods || [
-      'ElMessage.*',
-      'ElMessageBox.*',
-      'ElNotification.*',
-      'alert',
-      'confirm',
-    ],
+    translateMethods: config.translateMethods || (
+      isMobile
+        ? ['Toast', 'Toast.*']
+        : ['ElMessage.*', 'ElMessageBox.*', 'ElNotification.*', 'alert', 'confirm']
+    ),
     logDir: config.logDir || "logs",
     ai: config.ai || { enabled: false },
+    isMobile,
   };
 }
 
