@@ -45,11 +45,6 @@ async function runInit(config, projectRoot) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  // 移动端：检查并补全 tsconfig.json 的 resolveJsonModule
-  if (config.isMobile) {
-    ensureResolveJsonModule(projectRoot);
-  }
-
   // 创建源语言空文件
   const sourceFile = path.join(outputDir, `${sourceLang}.json`);
   if (!fs.existsSync(sourceFile)) {
@@ -74,11 +69,11 @@ async function runInit(config, projectRoot) {
   // 创建 index.ts（i18n 配置 + $t 导出 + Element Plus 集成）
   const indexFile = path.join(outputDir, "index.ts");
   if (!fs.existsSync(indexFile)) {
-    const isMobile = config.isMobile || false;
+    const uiLibrary = config.uiLibrary || "element-plus";
     let indexContent;
 
-    if (!isMobile) {
-      // PC 端：含 Element Plus locale 集成
+    if (uiLibrary === "element-plus") {
+      // Element Plus 模板：含 Element Plus locale 集成 + 语言切换同步
       indexContent = `import { createI18n } from 'vue-i18n'
 import { i18nTypeToString } from './typeToString'
 import { ref, watch } from 'vue'
@@ -135,7 +130,7 @@ export function setupI18n(app: any) {
 }
 `;
     } else {
-      // 移动端：不含 Element Plus，精简模板
+      // 精简模板：不含 Element Plus
       indexContent = `import { createI18n } from 'vue-i18n'
 import zhCN from './zh-CN.json'
 import en from './en.json'
@@ -344,44 +339,6 @@ function updateMainTs(projectRoot) {
   if (changed) {
     fs.writeFileSync(mainFile, content, "utf-8");
   }
-}
-
-/**
- * 检查并补全 tsconfig.json 的 resolveJsonModule 选项
- * 移动端项目默认未开启，但 locales/index.ts 需要 import JSON 文件
- * @param {string} projectRoot - 项目根目录
- */
-function ensureResolveJsonModule(projectRoot) {
-  const tsconfigPath = path.join(projectRoot, "tsconfig.json");
-  if (!fs.existsSync(tsconfigPath)) {
-    console.log("  警告: 未找到 tsconfig.json，跳过 resolveJsonModule 检查");
-    return;
-  }
-
-  let tsconfig;
-  try {
-    tsconfig = JSON.parse(fs.readFileSync(tsconfigPath, "utf-8"));
-  } catch (err) {
-    console.log(`  警告: tsconfig.json 解析失败: ${err.message}`);
-    return;
-  }
-
-  if (!tsconfig.compilerOptions) {
-    tsconfig.compilerOptions = {};
-  }
-
-  if (tsconfig.compilerOptions.resolveJsonModule === true) {
-    console.log("  跳过: tsconfig.json resolveJsonModule 已开启");
-    return;
-  }
-
-  tsconfig.compilerOptions.resolveJsonModule = true;
-  fs.writeFileSync(
-    tsconfigPath,
-    JSON.stringify(tsconfig, null, 2) + "\n",
-    "utf-8",
-  );
-  console.log("  新增: tsconfig.json 添加 resolveJsonModule: true");
 }
 
 module.exports = { runInit };

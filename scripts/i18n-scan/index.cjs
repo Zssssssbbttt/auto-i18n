@@ -11,6 +11,7 @@
 
 const path = require("path");
 const fs = require("fs");
+const { execSync } = require("child_process");
 const { scanFiles } = require("./scanner.cjs");
 const {
   loadLocaleReverseMap,
@@ -49,15 +50,71 @@ function confirm(question, defaultYes = true) {
 }
 
 /**
- * 加载配置文件
- * @returns {Promise<object>} 合并默认值后的配置
+ * 检测项目使用的包管理器
+ * @param {string} projectRoot
+ * @returns {'npm'|'yarn'|'pnpm'}
  */
+function detectPackageManager(projectRoot) {
+  if (fs.existsSync(path.join(projectRoot, "pnpm-lock.yaml"))) return "pnpm";
+  if (fs.existsSync(path.join(projectRoot, "yarn.lock"))) return "yarn";
+  return "npm";
+}
+
+/**
+ * 检查并自动安装 vue-i18n 依赖
+ * @param {string} projectRoot - 项目根目录
+ */
+function ensureVueI18n(projectRoot) {
+  const pkgPath = path.join(projectRoot, "package.json");
+
+  if (!fs.existsSync(pkgPath)) {
+    console.log("  警告: 未找到 package.json，跳过 vue-i18n 依赖检查");
+    return;
+  }
+
+  let pkg;
+  try {
+    pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+  } catch (err) {
+    console.log(`  警告: package.json 解析失败: ${err.message}`);
+    return;
+  }
+
+  const allDeps = {
+    ...(pkg.dependencies || {}),
+    ...(pkg.devDependencies || {}),
+  };
+
+  if ("vue-i18n" in allDeps) {
+    console.log("  ✓ vue-i18n 依赖已安装");
+    return;
+  }
+
+  const pm = detectPackageManager(projectRoot);
+  const installCmd =
+    pm === "yarn"
+      ? "yarn add vue-i18n"
+      : pm === "pnpm"
+        ? "pnpm add vue-i18n"
+        : "npm install vue-i18n";
+
+  console.log(`  ⚠ 未检测到 vue-i18n 依赖，正在自动安装...`);
+  console.log(`  > ${installCmd}`);
+
+  try {
+    execSync(installCmd, { cwd: projectRoot, stdio: "inherit" });
+    console.log("  ✓ vue-i18n 安装完成");
+  } catch (err) {
+    console.log(`  ✗ vue-i18n 安装失败: ${err.message}`);
+    console.log("  请手动安装: " + installCmd);
+  }
+}
 async function loadConfig() {
   // 配置文件始终与脚本同级
   const configPath = path.join(SCRIPT_DIR, "i18n.config.js");
 
-  // 使用 import() 动态加载 ESM 配置
-  const configUrl = `file://${configPath.replace(/\\/g, "/")}`;
+  // 使用 import() 动态加载 ESM 配置，加时间戳绕过模块缓存
+  const configUrl = `file://${configPath.replace(/\\/g, "/")}?t=${Date.now()}`;
   const mod = await import(configUrl);
   const config = mod.default || mod;
   return normalizeConfig(config);
@@ -69,7 +126,6 @@ async function loadConfig() {
  * @returns {object} 规范化后的配置
  */
 function normalizeConfig(config) {
-  const isMobile = config.isMobile !== undefined ? config.isMobile : false
   return {
     projectPath: config.projectPath || ".",
     scanScript: config.scanScript !== undefined ? config.scanScript : true,
@@ -82,14 +138,12 @@ function normalizeConfig(config) {
     localeStorageKey: config.localeStorageKey || "lang",
     translateAttributes: config.translateAttributes || [],
     ignoreAttributes: config.ignoreAttributes || [],
-    translateMethods: config.translateMethods || (
-      isMobile
-        ? ['Toast', 'Toast.*']
-        : ['ElMessage.*', 'ElMessageBox.*', 'ElNotification.*', 'alert', 'confirm']
-    ),
+    translateMethods: config.translateMethods || [
+      'ElMessage.*', 'ElMessageBox.*', 'ElNotification.*', 'alert', 'confirm'
+    ],
     logDir: config.logDir || "logs",
     ai: config.ai || { enabled: false },
-    isMobile,
+    uiLibrary: config.uiLibrary || "element-plus",
   };
 }
 
@@ -159,7 +213,10 @@ async function main() {
   if (mode === "all") {
     console.log("========== 全流程模式：init → translate → scan ==========\n");
 
-    console.log("[1/3] 初始化...");
+    // 检查并自动安装 vue-i18n
+    ensureVueI18n(PROJECT_ROOT);
+
+    console.log("\n[1/3] 初始化...");
     await runInit(config, PROJECT_ROOT);
 
     console.log("\n[2/3] AI 翻译...");
@@ -213,6 +270,9 @@ async function runInteractiveFlow() {
     process.exit(1);
   }
   PROJECT_ROOT = path.resolve(config.projectPath || SCRIPT_DIR);
+
+  // 检查并自动安装 vue-i18n
+  ensureVueI18n(PROJECT_ROOT);
 
   // ========== Step 1: 初始化 ==========
   console.log("");

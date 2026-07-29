@@ -605,11 +605,6 @@ const DEFAULT_TRANSLATE_METHODS = [
   "confirm",
 ];
 
-const DEFAULT_TRANSLATE_METHODS_MOBILE = [
-  "Toast",
-  "Toast.*",
-];
-
 const AI_SYSTEM_PROMPT = `# 角色定义
 你是一个严谨的 Vue 项目 i18n 国际化翻译助手。你的核心职责是接收一段或多段中文文本，将其翻译为目标语言，并生成结构清晰、语义准确且符合前端工程规范的 JSON 映射对象。
 
@@ -703,6 +698,12 @@ const TARGET_LANGUAGE_OPTIONS = [
   { value: "ru", label: "ru（俄语）" },
 ];
 
+const UI_LIBRARY_OPTIONS = [
+  { value: "element-plus", label: "Element Plus" },
+  { value: "vant", label: "Vant" },
+  { value: "none", label: "无组件库" },
+];
+
 const KEY_STYLE_OPTIONS = [
   { value: "camelCase", label: "camelCase（小驼峰）" },
   { value: "snake_case", label: "snake_case（蛇形）" },
@@ -760,11 +761,12 @@ const MAIN_ITEMS = [
     default: true,
   },
   {
-    key: "isMobile",
-    title: "是否为移动端项目？",
-    description: "移动端项目使用 Vant UI，生成的 locales/index.ts 不含 Element Plus 依赖，默认方法白名单使用 Toast",
-    type: "confirm",
-    default: false,
+    key: "uiLibrary",
+    title: "使用的 UI 组件库",
+    description: "选择项目使用的 UI 组件库，影响生成的 locales/index.ts 模板和翻译方法白名单",
+    type: "select",
+    options: UI_LIBRARY_OPTIONS,
+    default: "element-plus",
   },
   {
     key: "localeStorageKey",
@@ -970,8 +972,8 @@ function writeConfig(flat, configPath) {
   lines.push("  // 是否替换变量声明赋值中的中文");
   lines.push(`  scanScriptDeclarations: ${nested.scanScriptDeclarations !== false},`);
   lines.push("");
-  lines.push("  // 是否为移动端项目（移动端生成的 index.ts 不含 Element Plus）");
-  lines.push(`  isMobile: ${nested.isMobile === true},`);
+  lines.push("  // UI 组件库（element-plus / vant / none）");
+  lines.push(`  uiLibrary: ${JSON.stringify(nested.uiLibrary || "element-plus")},`);
   lines.push("");
   lines.push("  // 输出目录");
   lines.push(`  output: ${JSON.stringify(nested.output || "src/locales")},`);
@@ -1131,10 +1133,17 @@ async function runSetup(existingConfig, configPath) {
     newConfig.ignoreAttributes = getConfigValue(
       existingConfig, 'ignoreAttributes', DEFAULT_IGNORE_ATTRIBUTES
     );
-    newConfig.translateMethods = getConfigValue(
-      existingConfig, 'translateMethods',
-      newConfig.isMobile ? DEFAULT_TRANSLATE_METHODS_MOBILE : DEFAULT_TRANSLATE_METHODS
-    );
+    const UI_TRANSLATE_METHODS_MAP = {
+    "element-plus": DEFAULT_TRANSLATE_METHODS,
+    vant: ["Toast", "Toast.*"],
+    none: [],
+  };
+
+  newConfig.translateMethods = getConfigValue(
+    existingConfig,
+    "translateMethods",
+    UI_TRANSLATE_METHODS_MAP[newConfig.uiLibrary] || DEFAULT_TRANSLATE_METHODS,
+  );
 
     // ---- AI 条件项 ----
     if (newConfig["ai.enabled"]) {
@@ -1263,7 +1272,7 @@ function printSummary(config) {
     ...(config.scanScript !== false
       ? [["替换变量声明", config.scanScriptDeclarations !== false ? "是" : "否"]]
       : []),
-    ["移动端项目", config.isMobile ? "是" : "否"],
+    ["UI 组件库", config.uiLibrary || "element-plus"],
     ["源码语言", config.sourceLanguage],
     [
       "目标语言",
