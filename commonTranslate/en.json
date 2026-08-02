@@ -1,0 +1,17 @@
+{
+  "common": {
+    "pleaseInput": "Please enter",
+    "pleaseSelect": "Please select",
+    "pleaseSelectDash": "--- Please select ---",
+    "remark": "Remarks",
+    "tip": "Tip",
+    "confirm": "Confirm",
+    "search": "Search",
+    "reset": "Reset",
+    "serialNumber": "No.",
+    "noDetails": "No details available",
+    "attachment": "Attachment",
+    "startTime": "Start time",
+    "endTime": "End time"
+  }
+}

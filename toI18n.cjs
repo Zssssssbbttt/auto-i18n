@@ -1,6 +1,6 @@
 // toI18n.cjs — Vue 3 i18n 自动扫描脚本
 // 用法: node toI18n.cjs
-// 生成时间: 2026-07-24T09:07:44.311Z
+// 生成时间: 2026-07-31T07:11:25.759Z
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) => function __require() {
@@ -60114,17 +60114,29 @@ var require_template_parser = __commonJS({
       if (prop.exp) {
         const expression = getExpressionContent(prop.exp);
         if (expression && hasChinese(expression)) {
-          const chineseStrings = extractChineseFromExpression(expression);
           const line = getLine(prop.exp.loc || prop.loc, lineOffset);
-          chineseStrings.forEach((chineseText) => {
-            results.push({
-              line,
-              chineseText,
-              type: "dynamic-attr",
-              attrName,
-              context: getSourceLine(element.loc, lineOffset)
+          const templateItems = extractTemplateLiterals(
+            expression,
+            prop.exp.loc,
+            line,
+            attrName,
+            element,
+            lineOffset
+          );
+          results.push(...templateItems);
+          const expressionWithoutTemplates = expression.replace(/`[^`]*`/g, "");
+          if (hasChinese(expressionWithoutTemplates)) {
+            const chineseStrings = extractChineseFromExpression(expressionWithoutTemplates);
+            chineseStrings.forEach((chineseText) => {
+              results.push({
+                line,
+                chineseText,
+                type: "dynamic-attr",
+                attrName,
+                context: getSourceLine(element.loc, lineOffset)
+              });
             });
-          });
+          }
         }
       }
     }
@@ -60216,6 +60228,45 @@ var require_template_parser = __commonJS({
         return loc.source;
       }
       return "";
+    }
+    function extractTemplateLiterals(expression, expLoc, line, attrName, element, lineOffset) {
+      const results = [];
+      const templateRegex = /`([^`]*)`/g;
+      let match;
+      while ((match = templateRegex.exec(expression)) !== null) {
+        const templateContent = match[1];
+        if (!/\$\{/.test(templateContent)) continue;
+        if (!hasChinese(templateContent)) continue;
+        const parts = templateContent.split(/\$\{([^}]*)\}/);
+        const quasis = [];
+        const expressions = [];
+        for (let i = 0; i < parts.length; i++) {
+          if (i % 2 === 0) {
+            quasis.push(parts[i]);
+          } else {
+            expressions.push(parts[i]);
+          }
+        }
+        const templateStartCol = expLoc.start.column + match.index;
+        const templateEndCol = templateStartCol + match[0].length - 1;
+        quasis.forEach((quasi, idx) => {
+          if (hasChinese(quasi)) {
+            results.push({
+              line,
+              chineseText: quasi.trim(),
+              type: "template-literal",
+              attrName,
+              quasiIndex: idx,
+              templateStartCol,
+              templateEndCol,
+              quasis,
+              expressions,
+              context: getSourceLine(element.loc, lineOffset)
+            });
+          }
+        });
+      }
+      return results;
     }
     module2.exports = { parseTemplate };
   }
@@ -89034,6 +89085,76 @@ var require_replacer = __commonJS({
   }
 });
 
+// scripts/i18n-scan/utils/validate-locales.cjs
+var require_validate_locales = __commonJS({
+  "scripts/i18n-scan/utils/validate-locales.cjs"(exports2, module2) {
+    var path2 = require("path");
+    var fs2 = require("fs");
+    function countKeys(obj) {
+      let count = 0;
+      for (const key of Object.keys(obj)) {
+        if (typeof obj[key] === "string") {
+          count++;
+        } else if (typeof obj[key] === "object" && obj[key] !== null) {
+          count += countKeys(obj[key]);
+        }
+      }
+      return count;
+    }
+    function validateLocalePaths(localePaths, projectRoot, sourceLang, targetLangs) {
+      const errors = [];
+      if (!localePaths || localePaths.length === 0) {
+        return { valid: true, errors: [] };
+      }
+      const allLangs = [sourceLang, ...targetLangs.filter((l) => l !== sourceLang)];
+      for (const localePath of localePaths) {
+        const absPath = path2.resolve(projectRoot, localePath);
+        if (!fs2.existsSync(absPath)) {
+          errors.push(`\u8DEF\u5F84\u4E0D\u5B58\u5728: ${localePath}`);
+          continue;
+        }
+        let missingFiles = false;
+        for (const lang of allLangs) {
+          const langFile = path2.join(absPath, `${lang}.json`);
+          if (!fs2.existsSync(langFile)) {
+            errors.push(`\u7F3A\u5C11\u8BED\u8A00\u6587\u4EF6: ${localePath}/${lang}.json`);
+            missingFiles = true;
+          }
+        }
+        if (missingFiles) continue;
+        const sourceFile = path2.join(absPath, `${sourceLang}.json`);
+        let sourceData;
+        try {
+          sourceData = JSON.parse(fs2.readFileSync(sourceFile, "utf-8"));
+        } catch (err) {
+          errors.push(`\u65E0\u6CD5\u89E3\u6790 ${localePath}/${sourceLang}.json: ${err.message}`);
+          continue;
+        }
+        const sourceKeyCount = countKeys(sourceData);
+        for (const lang of targetLangs) {
+          if (lang === sourceLang) continue;
+          const langFile = path2.join(absPath, `${lang}.json`);
+          let langData;
+          try {
+            langData = JSON.parse(fs2.readFileSync(langFile, "utf-8"));
+          } catch (err) {
+            errors.push(`\u65E0\u6CD5\u89E3\u6790 ${localePath}/${lang}.json: ${err.message}`);
+            continue;
+          }
+          const langKeyCount = countKeys(langData);
+          if (langKeyCount !== sourceKeyCount) {
+            errors.push(
+              `key \u6570\u91CF\u4E0D\u4E00\u81F4: ${localePath}/${sourceLang}.json (${sourceKeyCount} \u6761) vs ${lang}.json (${langKeyCount} \u6761)`
+            );
+          }
+        }
+      }
+      return { valid: errors.length === 0, errors };
+    }
+    module2.exports = { countKeys, validateLocalePaths };
+  }
+});
+
 // scripts/i18n-scan/translator.cjs
 var require_translator = __commonJS({
   "scripts/i18n-scan/translator.cjs"(exports2, module2) {
@@ -89041,6 +89162,71 @@ var require_translator = __commonJS({
     var fs2 = require("fs");
     var { scanFiles: scanFiles2 } = require_scanner();
     var { loadLocaleReverseMap: loadLocaleReverseMap2 } = require_locale_manager();
+    var { countKeys, validateLocalePaths } = require_validate_locales();
+    var AI_SYSTEM_PROMPT = `# \u89D2\u8272\u5B9A\u4E49
+\u4F60\u662F\u4E00\u4E2A\u4E25\u8C28\u7684 Vue \u9879\u76EE i18n \u56FD\u9645\u5316\u7FFB\u8BD1\u52A9\u624B\u3002\u4F60\u7684\u6838\u5FC3\u804C\u8D23\u662F\u63A5\u6536\u4E00\u6BB5\u6216\u591A\u6BB5\u4E2D\u6587\u6587\u672C\uFF0C\u5C06\u5176\u7FFB\u8BD1\u4E3A\u76EE\u6807\u8BED\u8A00\uFF0C\u5E76\u751F\u6210\u7ED3\u6784\u6E05\u6670\u3001\u8BED\u4E49\u51C6\u786E\u4E14\u7B26\u5408\u524D\u7AEF\u5DE5\u7A0B\u89C4\u8303\u7684 JSON \u6620\u5C04\u5BF9\u8C61\u3002
+
+# \u4EFB\u52A1\u76EE\u6807
+\u5C06\u8F93\u5165\u7684\u4E2D\u6587\u6587\u672C\u7FFB\u8BD1\u6210\u6307\u5B9A\u7684\u76EE\u6807\u8BED\u8A00\uFF08\u5982\u82F1\u6587\uFF09\uFF0C\u5E76\u4E3A\u6BCF\u6761\u7FFB\u8BD1\u6587\u672C\u751F\u6210\u4E00\u4E2A\u5408\u7406\u7684\u5D4C\u5957 Key\uFF0C\u6700\u7EC8\u8F93\u51FA\u4E00\u4E2A\u4E25\u683C\u7B26\u5408\u683C\u5F0F\u8981\u6C42\u7684 JSON \u5BF9\u8C61\u3002
+
+# \u786C\u6027\u89C4\u5219\uFF08\u5FC5\u987B\u9075\u5B88\uFF0C\u8FDD\u53CD\u5373\u89C6\u4E3A\u9519\u8BEF\uFF09
+
+## 1. JSON \u9876\u5C42 Key \u89C4\u5219\uFF08\u6700\u9AD8\u4F18\u5148\u7EA7\uFF09
+- \u9876\u5C42 Key **\u5FC5\u987B**\u3001**\u5F3A\u5236**\u4F7F\u7528\u8F93\u5165\u7684\u4E2D\u6587\u539F\u6587\uFF0C**\u4E00\u5B57\u4E0D\u6539**\u3002
+- \u5305\u62EC\u539F\u6587\u4E2D\u7684**\u6240\u6709\u7A7A\u683C\u3001\u6807\u70B9\u7B26\u53F7\uFF08\u5168\u89D2/\u534A\u89D2\uFF09\u3001\u7279\u6B8A\u5B57\u7B26**\u5747\u9700\u539F\u6837\u4FDD\u7559\u5728 Key \u4E2D\u3002
+- **\u4E25\u7981**\u5BF9\u539F\u6587\u8FDB\u884C\u4EFB\u4F55\u5F62\u5F0F\u7684\u4FEE\u6539\uFF0C\u5305\u62EC\u4F46\u4E0D\u9650\u4E8E\uFF1A
+  - \u274C \u5220\u9664\u4EFB\u4F55\u5B57\u7B26\uFF08\u5982\u5220\u9664\u53E5\u53F7\u3001\u95EE\u53F7\u3001\u611F\u53F9\u53F7\uFF09
+  - \u274C \u6DFB\u52A0\u4EFB\u4F55\u5B57\u7B26\uFF08\u5982\u6DFB\u52A0\u7701\u7565\u53F7 \`...\`\u3001\u53E5\u53F7\u3001\u7A7A\u683C\u7B49\uFF09
+  - \u274C \u66FF\u6362\u4EFB\u4F55\u5B57\u7B26\uFF08\u5982\u5C06\u534A\u89D2\u9017\u53F7\u6539\u4E3A\u5168\u89D2\u9017\u53F7\uFF0C\u6216\u5C06\u4E2D\u6587\u62EC\u53F7\u6539\u4E3A\u82F1\u6587\u62EC\u53F7\uFF09
+  - \u274C \u8C03\u6574\u987A\u5E8F\u6216\u6539\u53D8\u683C\u5F0F
+- \u2705 \u6B63\u786E\u793A\u4F8B\uFF1A\u539F\u6587 \`\u52A0\u8F7D\u4E2D\` \u2192 Key \u5FC5\u987B\u4E3A \`"\u52A0\u8F7D\u4E2D"\`
+- \u274C \u9519\u8BEF\u793A\u4F8B\uFF1A\u539F\u6587 \`\u52A0\u8F7D\u4E2D\` \u2192 Key \u8BEF\u5199\u4E3A \`"\u52A0\u8F7D\u4E2D..."\`\uFF08\u6DFB\u52A0\u4E86 \`...\`\uFF09
+
+## 2. \u5D4C\u5957 Value Key \u89C4\u5219
+- \u6BCF\u4E2A\u9876\u5C42 Key \u5BF9\u5E94\u7684\u503C\u662F\u4E00\u4E2A\u5BF9\u8C61\uFF0C\u8BE5\u5BF9\u8C61\u5185\u90E8\u7684 Key \u4E3A\u7FFB\u8BD1\u6761\u76EE\u7684\u552F\u4E00\u6807\u8BC6\u7B26\u3002
+- \u8BE5\u6807\u8BC6\u7B26\u5FC5\u987B\u4F7F\u7528 **camelCase\uFF08\u5C0F\u9A7C\u5CF0\uFF09** \u683C\u5F0F\u7684\u82F1\u6587\uFF0C\u5E94**\u7CBE\u51C6\u3001\u7B80\u6D01**\u5730\u6982\u62EC\u5BF9\u5E94\u4E2D\u6587\u6587\u672C\u7684\u6838\u5FC3\u542B\u4E49\u3002
+- \u5EFA\u8BAE\u683C\u5F0F\uFF1A\`{\u6A21\u5757\u524D\u7F00}{\u5177\u4F53\u52A8\u4F5C/\u540D\u8BCD}\`\uFF0C\u4F8B\u5982 \`commonConfirm\`\u3001\`formValidateError\`\u3002
+
+## 3. \u6A21\u5757\u540D\uFF08module\uFF09\u63A8\u65AD\u89C4\u5219
+\u6839\u636E\u8F93\u5165\u6587\u672C\u7684\u4F7F\u7528\u573A\u666F\uFF0C\u63A8\u65AD\u5176\u6240\u5C5E\u6A21\u5757\uFF0C\u4F5C\u4E3A\u5D4C\u5957\u5BF9\u8C61\u7684\u5206\u7EC4\u4F9D\u636E\uFF1A
+- \`common\` \u2014 \u901A\u7528\u754C\u9762\u5143\u7D20\uFF08\u5982"\u786E\u8BA4"\u3001"\u53D6\u6D88"\u3001"\u5173\u95ED"\uFF09
+- \`validation\` \u2014 \u8868\u5355\u6821\u9A8C\u63D0\u793A\uFF08\u5982"\u8BF7\u8F93\u5165\u7528\u6237\u540D"\u3001"\u5BC6\u7801\u4E0D\u80FD\u4E3A\u7A7A"\uFF09
+- \`placeholder\` \u2014 \u8F93\u5165\u6846\u5360\u4F4D\u7B26\uFF08\u5982"\u641C\u7D22\u5173\u952E\u5B57"\u3001"\u8BF7\u9009\u62E9\u65E5\u671F"\uFF09
+- \`flow\` \u2014 \u4E1A\u52A1\u6D41\u7A0B\u63CF\u8FF0\uFF08\u5982"\u63D0\u4EA4\u6210\u529F"\u3001"\u6B63\u5728\u5904\u7406\u4E2D"\uFF09
+- \`status\` \u2014 \u72B6\u6001\u63D0\u793A\uFF08\u5982"\u52A0\u8F7D\u4E2D"\u3001"\u6682\u65E0\u6570\u636E"\uFF09
+- \u82E5\u65E0\u6CD5\u660E\u786E\u5F52\u7C7B\uFF0C\u6839\u636E\u8BED\u4E49\u63A8\u65AD\u4E1A\u52A1\u9886\u57DF\uFF08\u5982 \`user\`\u3001\`order\`\u3001\`dashboard\`\uFF09
+
+## 4. \u7FFB\u8BD1\u5185\u5BB9\u89C4\u5219
+- \u7FFB\u8BD1\u4E3A\u76EE\u6807\u8BED\u8A00\u65F6\uFF0C\u5E94\u4FDD\u6301**\u8BED\u4E49\u51C6\u786E\u3001\u81EA\u7136\u6D41\u7545**\u3002
+- \u7FFB\u8BD1\u5185\u5BB9**\u4E0D\u5FC5**\u4E0E\u4E2D\u6587\u539F\u6587\u5728\u6807\u70B9\u7B26\u53F7\u4E0A\u4E25\u683C\u4E00\u4E00\u5BF9\u5E94\uFF0C\u4F46\u5E94\u9075\u5FAA\u76EE\u6807\u8BED\u8A00\u7684\u6807\u51C6\u8868\u8FBE\u4E60\u60EF\u3002
+- \u4F8B\u5982\uFF1A\u4E2D\u6587 \`\u52A0\u8F7D\u4E2D\` \u53EF\u8BD1\u4E3A \`Loading\`\uFF0C\u800C\u4E0D\u5FC5\u6DFB\u52A0 \`...\`\u3002
+
+## 5. \u8F93\u51FA\u683C\u5F0F\u8981\u6C42\uFF08\u7EDD\u5BF9\u4E25\u683C\uFF09
+- **\u6700\u7EC8\u8F93\u51FA\u5FC5\u987B\u662F\u4E00\u4E2A\u7EAF JSON \u5BF9\u8C61**\u3002
+- **\u7981\u6B62**\u5728\u8F93\u51FA\u5185\u5BB9\u524D\u540E\u6DFB\u52A0\u4EFB\u4F55\u6587\u5B57\u8BF4\u660E\u3001\u6CE8\u91CA\u3001Markdown \u4EE3\u7801\u5757\u6807\u8BB0\uFF08\u5982 \`\`\`json \u6216 \`\`\`\uFF09\u3002
+- **\u7981\u6B62**\u8F93\u51FA\u4EFB\u4F55\u89E3\u91CA\u6027\u3001\u5206\u6790\u6027\u6216\u65E0\u5173\u7684\u6587\u672C\u5185\u5BB9\u3002
+- \u786E\u4FDD JSON \u683C\u5F0F\u5408\u6CD5\uFF0C\u53EF\u88AB \`JSON.parse()\` \u76F4\u63A5\u89E3\u6790\u3002
+- \u6574\u4E2A\u8F93\u51FA\u53EA\u80FD\u5305\u542B\u4E00\u4E2A JSON \u5BF9\u8C61\uFF0C\u4E0D\u80FD\u5305\u542B\u591A\u4E2A\u9876\u5C42\u5BF9\u8C61\u6216\u6570\u7EC4\u5305\u88F9\u3002
+
+# \u7981\u6B62\u9879\u6E05\u5355\uFF08\u7EA2\u7EBF\uFF0C\u4E0D\u53EF\u89E6\u78B0\uFF09
+| \u7981\u6B62\u884C\u4E3A | \u8BF4\u660E |
+|---------|------|
+| \u4FEE\u6539\u9876\u5C42 Key \u4E2D\u7684\u4E2D\u6587\u539F\u6587 | \u5305\u62EC\u5220\u9664\u3001\u6DFB\u52A0\u3001\u66FF\u6362\u4EFB\u4F55\u5B57\u7B26\uFF0C\u54EA\u6015\u662F\u4E00\u4E2A\u7A7A\u683C\u6216\u4E00\u4E2A\u6807\u70B9 |
+| \u5728\u4E2D\u6587\u539F\u6587\u540E\u6DFB\u52A0\u7701\u7565\u53F7 \`...\` | \u5982 \`\u52A0\u8F7D\u4E2D\` \u2192 \`\u52A0\u8F7D\u4E2D...\` \u7EDD\u5BF9\u7981\u6B62 |
+| \u5728\u4E2D\u6587\u539F\u6587\u540E\u6DFB\u52A0\u53E5\u53F7\u6216\u95EE\u53F7 | \u5982 \`\u786E\u8BA4\` \u2192 \`\u786E\u8BA4\u3002\` \u7EDD\u5BF9\u7981\u6B62 |
+| \u5220\u9664\u4E2D\u6587\u539F\u6587\u4E2D\u7684\u53E5\u53F7\u3001\u95EE\u53F7\u7B49 | \u5982 \`\u63D0\u4EA4\u6210\u529F\u3002\` \u2192 \`\u63D0\u4EA4\u6210\u529F\` \u7EDD\u5BF9\u7981\u6B62 |
+| \u8F93\u51FA\u975E JSON \u683C\u5F0F\u7684\u5185\u5BB9 | \u5982\u6DFB\u52A0\u89E3\u91CA\u3001\u6CE8\u91CA\u3001Markdown \u6807\u8BB0\u7B49 |
+| \u5408\u5E76\u591A\u6761\u6587\u672C\u5230\u540C\u4E00\u4E2A Key | \u6BCF\u6761\u4E2D\u6587\u6587\u672C\u5FC5\u987B\u72EC\u7ACB\u6210\u952E |
+
+# \u91CD\u8981\u63D0\u9192
+- **\u9876\u5C42 Key \u662F\u4E2D\u6587\u539F\u6587\u7684"\u955C\u50CF"**\uFF0C\u5FC5\u987B\u505A\u5230\u5B57\u7B26\u7EA7\u522B\u7684\u4E00\u81F4\u3002
+- \u5982\u679C\u539F\u6587\u6709\u53E5\u53F7\uFF0CKey \u4E2D\u5C31\u6709\u53E5\u53F7\uFF1B\u5982\u679C\u539F\u6587\u6CA1\u6709\uFF0CKey \u4E2D\u5C31\u6CA1\u6709\u3002
+- \u5D4C\u5957 Key\uFF08\u82F1\u6587 camelCase\uFF09\u53EF\u4EE5\u81EA\u7531\u8BBE\u8BA1\uFF0C\u4E0D\u53D7\u6B64\u9650\u5236\u3002`;
+    var AI_USER_PROMPT_TEMPLATE = '\u6587\u4EF6\u8DEF\u5F84\uFF1A{filePath}\n\u76EE\u6807\u8BED\u8A00\uFF1A{targetLanguages}\n\n\u8BF7\u4E3A\u4EE5\u4E0B\u4E2D\u6587\u6587\u672C\u751F\u6210 key \u548C\u7FFB\u8BD1\uFF0C\u8F93\u51FA JSON \u683C\u5F0F\uFF1A\n{chineseTexts}\n\n\u8F93\u51FA\u683C\u5F0F\u793A\u4F8B\uFF1A\n{"\u53D1\u8D77\u4EBA": {"key": "accredit.sponsor", "en-US": "Sponsor"}, "\u8BF7\u9009\u62E9": {"key": "common.pleaseSelect", "en-US": "Please select"}}';
+    var AI_GAP_SYSTEM_PROMPT = `\u4F60\u662F\u4E00\u4E2A i18n \u7FFB\u8BD1\u52A9\u624B\u3002\u8BF7\u5C06\u7ED9\u5B9A\u7684\u4E2D\u6587\u6587\u672C\u7FFB\u8BD1\u4E3A\u6307\u5B9A\u7684\u76EE\u6807\u8BED\u8A00\u3002
+\u6BCF\u6761\u6587\u672C\u5DF2\u6709\u56FA\u5B9A\u7684 key \u8DEF\u5F84\uFF0C\u4F60\u53EA\u9700\u8981\u5C06 JSON \u4E2D\u7684\u7A7A\u5B57\u7B26\u4E32\u66FF\u6362\u4E3A\u5BF9\u5E94\u7FFB\u8BD1\u3002
+\u4E25\u683C\u4FDD\u6301 JSON \u7ED3\u6784\u4E0D\u53D8\uFF0C\u4E0D\u8981\u4FEE\u6539\u4EFB\u4F55 key\uFF0C\u4E0D\u8981\u6DFB\u52A0\u6216\u5220\u9664\u4EFB\u4F55\u5B57\u6BB5\u3002
+\u53EA\u8F93\u51FA\u586B\u5145\u540E\u7684 JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981\u6DFB\u52A0\u4EFB\u4F55\u5176\u4ED6\u5185\u5BB9\u3002`;
     async function translateViaAI2(config, projectRoot) {
       const aiConfig = config.ai || {};
       if (!aiConfig.enabled) {
@@ -89278,10 +89464,10 @@ var require_translator = __commonJS({
         baseURL,
         model,
         temperature,
-        maxTokens,
-        systemPrompt,
-        userPromptTemplate
+        maxTokens
       } = aiConfig;
+      const systemPrompt = aiConfig.systemPrompt || AI_SYSTEM_PROMPT;
+      const userPromptTemplate = aiConfig.userPromptTemplate || AI_USER_PROMPT_TEMPLATE;
       const chineseTextsStr = chineseTexts.join("\n");
       const userPrompt = userPromptTemplate.replace("{filePath}", "batch translation").replace("{targetLanguages}", targetLanguages.join(", ")).replace("{chineseTexts}", chineseTextsStr);
       const url = `${baseURL}/chat/completions`;
@@ -89402,77 +89588,20 @@ var require_translator = __commonJS({
       fs2.writeFileSync(logFile, lines.join("\n"), "utf-8");
       console.log(`  \u672A\u5339\u914D\u65E5\u5FD7: ${path2.relative(projectRoot, logFile)}`);
     }
-    function countKeys(obj) {
-      let count = 0;
-      for (const key of Object.keys(obj)) {
-        if (typeof obj[key] === "string") {
-          count++;
-        } else if (typeof obj[key] === "object" && obj[key] !== null) {
-          count += countKeys(obj[key]);
-        }
-      }
-      return count;
-    }
     function validateReferenceLocales(refLocales, projectRoot, sourceLang, targetLangs) {
-      if (!refLocales || refLocales.length === 0) return;
-      for (const refPath of refLocales) {
-        const absRefPath = path2.resolve(projectRoot, refPath);
-        if (!fs2.existsSync(absRefPath)) {
-          console.error(`
-\u53C2\u8003\u8BED\u8A00\u5305\u6821\u9A8C\u5931\u8D25: \u8DEF\u5F84\u4E0D\u5B58\u5728`);
-          console.error(`  \u8DEF\u5F84: ${absRefPath}`);
-          process.exit(1);
+      const { valid, errors } = validateLocalePaths(
+        refLocales,
+        projectRoot,
+        sourceLang,
+        targetLangs
+      );
+      if (!valid) {
+        console.error(`
+\u53C2\u8003\u8BED\u8A00\u5305\u6821\u9A8C\u5931\u8D25:`);
+        for (const err of errors) {
+          console.error(`  - ${err}`);
         }
-        const allLangs = [
-          sourceLang,
-          ...targetLangs.filter((l) => l !== sourceLang)
-        ];
-        for (const lang of allLangs) {
-          const langFile = path2.join(absRefPath, `${lang}.json`);
-          if (!fs2.existsSync(langFile)) {
-            console.error(`
-\u53C2\u8003\u8BED\u8A00\u5305\u6821\u9A8C\u5931\u8D25: \u7F3A\u5C11\u8BED\u8A00\u6587\u4EF6`);
-            console.error(`  \u8DEF\u5F84: ${absRefPath}`);
-            console.error(`  \u7F3A\u5C11: ${lang}.json`);
-            console.error(`  \u9700\u8981: ${allLangs.map((l) => `${l}.json`).join(", ")}`);
-            process.exit(1);
-          }
-        }
-        const sourceFile = path2.join(absRefPath, `${sourceLang}.json`);
-        let sourceData;
-        try {
-          sourceData = JSON.parse(fs2.readFileSync(sourceFile, "utf-8"));
-        } catch (err) {
-          console.error(`
-\u53C2\u8003\u8BED\u8A00\u5305\u6821\u9A8C\u5931\u8D25: \u65E0\u6CD5\u89E3\u6790 ${sourceLang}.json`);
-          console.error(`  \u8DEF\u5F84: ${absRefPath}`);
-          console.error(`  \u9519\u8BEF: ${err.message}`);
-          process.exit(1);
-        }
-        const sourceKeyCount = countKeys(sourceData);
-        for (const lang of targetLangs) {
-          if (lang === sourceLang) continue;
-          const langFile = path2.join(absRefPath, `${lang}.json`);
-          let langData;
-          try {
-            langData = JSON.parse(fs2.readFileSync(langFile, "utf-8"));
-          } catch (err) {
-            console.error(`
-\u53C2\u8003\u8BED\u8A00\u5305\u6821\u9A8C\u5931\u8D25: \u65E0\u6CD5\u89E3\u6790 ${lang}.json`);
-            console.error(`  \u8DEF\u5F84: ${absRefPath}`);
-            console.error(`  \u9519\u8BEF: ${err.message}`);
-            process.exit(1);
-          }
-          const langKeyCount = countKeys(langData);
-          if (langKeyCount !== sourceKeyCount) {
-            console.error(`
-\u53C2\u8003\u8BED\u8A00\u5305\u6821\u9A8C\u5931\u8D25: key \u6570\u91CF\u4E0D\u4E00\u81F4`);
-            console.error(`  \u8DEF\u5F84: ${absRefPath}`);
-            console.error(`  ${sourceLang}.json: ${sourceKeyCount} \u6761`);
-            console.error(`  ${lang}.json: ${langKeyCount} \u6761`);
-            process.exit(1);
-          }
-        }
+        process.exit(1);
       }
     }
     function findTranslationGaps(sourceData, targetDataMap, targetLangs, sourceLang) {
@@ -89515,12 +89644,6 @@ var require_translator = __commonJS({
       }
       return current;
     }
-    function getDefaultGapSystemPrompt() {
-      return `\u4F60\u662F\u4E00\u4E2A i18n \u7FFB\u8BD1\u52A9\u624B\u3002\u8BF7\u5C06\u7ED9\u5B9A\u7684\u4E2D\u6587\u6587\u672C\u7FFB\u8BD1\u4E3A\u6307\u5B9A\u7684\u76EE\u6807\u8BED\u8A00\u3002
-\u6BCF\u6761\u6587\u672C\u5DF2\u6709\u56FA\u5B9A\u7684 key \u8DEF\u5F84\uFF0C\u4F60\u53EA\u9700\u8981\u5C06 JSON \u4E2D\u7684\u7A7A\u5B57\u7B26\u4E32\u66FF\u6362\u4E3A\u5BF9\u5E94\u7FFB\u8BD1\u3002
-\u4E25\u683C\u4FDD\u6301 JSON \u7ED3\u6784\u4E0D\u53D8\uFF0C\u4E0D\u8981\u4FEE\u6539\u4EFB\u4F55 key\uFF0C\u4E0D\u8981\u6DFB\u52A0\u6216\u5220\u9664\u4EFB\u4F55\u5B57\u6BB5\u3002
-\u53EA\u8F93\u51FA\u586B\u5145\u540E\u7684 JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981\u6DFB\u52A0\u4EFB\u4F55\u5176\u4ED6\u5185\u5BB9\u3002`;
-    }
     async function callAiApiForGaps(aiConfig, batch, missingLangs, retryMissingKeys) {
       const { apiKey, baseURL, model, temperature, maxTokens } = aiConfig;
       const referenceLines = batch.map((item) => `  ${item.fullKey} \u2192 ${item.chineseText}`).join("\n");
@@ -89546,7 +89669,7 @@ ${retryMissingKeys.join(
           "\n"
         )}`;
       }
-      const systemPrompt = aiConfig.gapSystemPrompt || getDefaultGapSystemPrompt();
+      const systemPrompt = aiConfig.gapSystemPrompt || AI_GAP_SYSTEM_PROMPT;
       let finalUserPrompt;
       if (aiConfig.gapUserPromptTemplate) {
         finalUserPrompt = aiConfig.gapUserPromptTemplate.replace(/\{missingLangs\}/g, missingLangs.join(", ")).replace(/\{template\}/g, templateJson).replace(/\{reference\}/g, referenceLines);
@@ -89667,8 +89790,7 @@ ${retryMissingKeys.join(
     module2.exports = {
       translateViaAI: translateViaAI2,
       findTranslationGaps,
-      validateReferenceLocales,
-      countKeys
+      validateReferenceLocales
     };
   }
 });
@@ -89679,8 +89801,8 @@ var require_logger = __commonJS({
     function printSeparator2(title, width = 60) {
       if (title) {
         const len = title.length;
-        const left = Math.floor((width - len - 2) / 2);
-        const right = width - len - 2 - left;
+        const left = Math.max(0, Math.floor((width - len - 2) / 2));
+        const right = Math.max(0, width - len - 2 - left);
         console.log(`${"=".repeat(left)} ${title} ${"=".repeat(right)}`);
       } else {
         console.log("=".repeat(width));
@@ -89699,6 +89821,7 @@ var require_init = __commonJS({
   "scripts/i18n-scan/init.cjs"(exports2, module2) {
     var path2 = require("path");
     var fs2 = require("fs");
+    var { validateLocalePaths } = require_validate_locales();
     var SCRIPT_DIR2 = __dirname;
     async function loadConfig2() {
       const configPath = path2.join(SCRIPT_DIR2, "i18n.config.js");
@@ -89712,7 +89835,8 @@ var require_init = __commonJS({
         process.exit(1);
       }
     }
-    async function runInit2(config, projectRoot) {
+    async function runInit2(config, projectRoot, options = {}) {
+      const { interactive = false, confirmFn = null } = options;
       const outputDir = path2.resolve(projectRoot, config.output || "src/locales");
       const sourceLang = config.sourceLanguage || "zh-CN";
       const targetLangs = config.targetLanguages || ["en"];
@@ -89737,63 +89861,47 @@ var require_init = __commonJS({
           console.log(`  \u8DF3\u8FC7: ${lang}.json\uFF08\u5DF2\u5B58\u5728\uFF09`);
         }
       }
+      const sharedLocales = config.sharedLocales || [];
+      let validSharedLocales = [];
+      if (sharedLocales.length > 0) {
+        const { valid, errors } = validateLocalePaths(
+          sharedLocales,
+          projectRoot,
+          sourceLang,
+          targetLangs
+        );
+        if (valid) {
+          validSharedLocales = sharedLocales;
+          console.log(`  \u5171\u4EAB\u8BED\u8A00\u5305\u6821\u9A8C\u901A\u8FC7: ${sharedLocales.length} \u4E2A`);
+        } else {
+          console.log(`
+  \u5171\u4EAB\u8BED\u8A00\u5305\u6821\u9A8C\u5931\u8D25:`);
+          for (const err of errors) {
+            console.log(`    - ${err}`);
+          }
+          if (interactive && confirmFn) {
+            const proceed = await confirmFn(
+              "\n  \u662F\u5426\u7EE7\u7EED\uFF1F\uFF08\u7EE7\u7EED\u5C06\u4E0D\u5408\u5E76\u5171\u4EAB\u8BED\u8A00\u5305\uFF0C\u751F\u6210\u6807\u51C6 index.ts\uFF09",
+              true
+            );
+            if (!proceed) {
+              console.log("  \u5DF2\u4E2D\u6B62");
+              process.exit(1);
+            }
+            console.log("  \u7EE7\u7EED\uFF0C\u5C06\u4E0D\u5408\u5E76\u5171\u4EAB\u8BED\u8A00\u5305");
+          } else {
+            console.log("  \u8B66\u544A: \u5171\u4EAB\u8BED\u8A00\u5305\u6821\u9A8C\u672A\u901A\u8FC7\uFF0C\u5C06\u4E0D\u5408\u5E76\u5171\u4EAB\u8BED\u8A00\u5305");
+          }
+        }
+      }
       const indexFile = path2.join(outputDir, "index.ts");
       if (!fs2.existsSync(indexFile)) {
-        const indexContent = `import { createI18n } from 'vue-i18n'
-import { i18nTypeToString } from './typeToString'
-import { ref, watch } from 'vue'
-import { localeContextKey } from 'element-plus'
-import zhCN from './zh-CN.json'
-import en from './en.json'
-import zhCNElement from 'element-plus/dist/locale/zh-cn.mjs'
-import enElement from 'element-plus/dist/locale/en.mjs'
-
-const elementLocales: Record<string, any> = {
-  'zh-CN': zhCNElement,
-  en: enElement,
-}
-
-const currentElementLocale = ref(
-  elementLocales[localStorage.getItem('${storageKey}') || 'zh-CN'] ||
-    elementLocales['zh-CN']
-)
-
-const i18n = createI18n({
-  legacy: false,
-  locale: localStorage.getItem('${storageKey}') || 'zh-CN',
-  messages: {
-    'zh-CN': zhCN,
-    en: en,
-  },
-  silentTranslationWarn: true,
-})
-
-watch(
-  () => i18n.global.locale.value,
-  (newLocale) => {
-    currentElementLocale.value =
-      elementLocales[newLocale] || elementLocales['zh-CN']
-  }
-)
-
-// \u62E6\u622A install\uFF0C\u5728 app.use(i18n) \u65F6\u81EA\u52A8 provide Element Plus \u7684 locale
-const originalInstall = i18n.install.bind(i18n)
-i18n.install = (app: any) => {
-  originalInstall(app)
-  app.provide(localeContextKey, currentElementLocale)
-}
-
-export const $t = i18n.global.t
-
-export default i18n
-
-// \u5168\u5C40\u6CE8\u518C $t\uFF0C\u53EF\u5728 script setup \u4E2D\u76F4\u63A5\u4F7F\u7528
-export function setupI18n(app: any) {
-  app.use(i18n)
-  app.config.globalProperties.$t = i18n.global.t
-  app.config.globalProperties.i18nTypeToString = i18nTypeToString
-}
-`;
+        const indexContent = generateIndexContent(
+          config,
+          outputDir,
+          projectRoot,
+          validSharedLocales
+        );
         fs2.writeFileSync(indexFile, indexContent, "utf-8");
         console.log(`  \u521B\u5EFA: index.ts`);
       } else {
@@ -89838,6 +89946,137 @@ export function useI18n() {
       updateMainTs(projectRoot);
       console.log("\n\u521D\u59CB\u5316\u5B8C\u6210");
     }
+    function langToVarName(lang) {
+      const parts = lang.split("-");
+      return parts[0].toLowerCase() + parts.slice(1).map((p) => p[0].toUpperCase() + p.slice(1)).join("");
+    }
+    function generateIndexContent(config, outputDir, projectRoot, validSharedLocales) {
+      const sourceLang = config.sourceLanguage || "zh-CN";
+      const targetLangs = config.targetLanguages || ["en"];
+      const storageKey = config.localeStorageKey || "lang";
+      const uiLibrary = config.uiLibrary || "element-plus";
+      const allLangs = [sourceLang, ...targetLangs.filter((l) => l !== sourceLang)];
+      let sharedImports = "";
+      const sharedVars = {};
+      for (const lang of allLangs) {
+        sharedVars[lang] = [];
+      }
+      for (let i = 0; i < validSharedLocales.length; i++) {
+        const sharedPath = validSharedLocales[i];
+        const absSharedPath = path2.resolve(projectRoot, sharedPath);
+        let relPath = path2.relative(outputDir, absSharedPath).replace(/\\/g, "/");
+        if (!relPath.startsWith(".")) {
+          relPath = "./" + relPath;
+        }
+        for (const lang of allLangs) {
+          const varName = `shared${langToVarName(lang)}${i}`;
+          sharedImports += `import ${varName} from '${relPath}/${lang}.json'
+`;
+          sharedVars[lang].push(varName);
+        }
+      }
+      const hasShared = validSharedLocales.length > 0;
+      const deepMergeFn = hasShared ? `
+function deepMerge(target: any, ...sources: any[]): any {
+  for (const source of sources) {
+    for (const key of Object.keys(source)) {
+      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+        if (!target[key]) target[key] = {}
+        deepMerge(target[key], source[key])
+      } else {
+        target[key] = source[key]
+      }
+    }
+  }
+  return target
+}
+` : "";
+      const messagesLines = allLangs.map((lang) => {
+        const localVar = langToVarName(lang);
+        if (hasShared) {
+          const args = ["{}", ...sharedVars[lang], localVar].join(", ");
+          return `    '${lang}': deepMerge(${args}),`;
+        }
+        return `    '${lang}': ${localVar},`;
+      }).join("\n");
+      const localImports = allLangs.map((lang) => `import ${langToVarName(lang)} from './${lang}.json'`).join("\n");
+      if (uiLibrary === "element-plus") {
+        return `import { createI18n } from 'vue-i18n'
+import { i18nTypeToString } from './typeToString'
+import { ref, watch } from 'vue'
+import { localeContextKey } from 'element-plus'
+${localImports}
+${sharedImports}import zhCNElement from 'element-plus/dist/locale/zh-cn.mjs'
+import enElement from 'element-plus/dist/locale/en.mjs'${deepMergeFn}
+const elementLocales: Record<string, any> = {
+  'zh-CN': zhCNElement,
+  en: enElement,
+}
+
+const currentElementLocale = ref(
+  elementLocales[localStorage.getItem('${storageKey}') || 'zh-CN'] ||
+    elementLocales['zh-CN']
+)
+
+const i18n = createI18n({
+  legacy: false,
+  locale: localStorage.getItem('${storageKey}') || 'zh-CN',
+  messages: {
+${messagesLines}
+  },
+  silentTranslationWarn: true,
+})
+
+watch(
+  () => i18n.global.locale.value,
+  (newLocale) => {
+    currentElementLocale.value =
+      elementLocales[newLocale] || elementLocales['zh-CN']
+  }
+)
+
+// \u62E6\u622A install\uFF0C\u5728 app.use(i18n) \u65F6\u81EA\u52A8 provide Element Plus \u7684 locale
+const originalInstall = i18n.install.bind(i18n)
+i18n.install = (app: any) => {
+  originalInstall(app)
+  app.provide(localeContextKey, currentElementLocale)
+}
+
+export const $t = i18n.global.t
+
+export default i18n
+
+// \u5168\u5C40\u6CE8\u518C $t\uFF0C\u53EF\u5728 script setup \u4E2D\u76F4\u63A5\u4F7F\u7528
+export function setupI18n(app: any) {
+  app.use(i18n)
+  app.config.globalProperties.$t = i18n.global.t
+  app.config.globalProperties.i18nTypeToString = i18nTypeToString
+}
+`;
+      } else {
+        return `import { createI18n } from 'vue-i18n'
+${localImports}
+${sharedImports}${deepMergeFn}
+const i18n = createI18n({
+  legacy: false,
+  locale: localStorage.getItem('${storageKey}') || 'zh-CN',
+  messages: {
+${messagesLines}
+  },
+  silentTranslationWarn: true,
+})
+
+export const $t = i18n.global.t
+
+export default i18n
+
+export function setupI18n(app: any) {
+  app.use(i18n)
+  app.config.globalProperties.$t = i18n.global.t
+}
+`;
+      }
+    }
     async function main2() {
       const config = await loadConfig2();
       const projectRoot = path2.resolve(config.projectPath || SCRIPT_DIR2);
@@ -89851,6 +90090,7 @@ export function useI18n() {
       }
       let content = fs2.readFileSync(mainFile, "utf-8");
       const newImport = "import i18n, { $t } from './locales'";
+      const vnetImport = "import { setI18nInstance, getComponentMessages } from '@vnet/i18n'";
       let changed = false;
       if (content.includes(newImport)) {
         console.log("  \u8DF3\u8FC7: main.ts \u5F15\u5165\u8DEF\u5F84\u5DF2\u6B63\u786E");
@@ -89864,6 +90104,7 @@ export function useI18n() {
         }
         if (lastImportLine >= 0) {
           lines.splice(lastImportLine + 1, 0, newImport);
+          lastImportLine++;
           content = lines.join("\n");
           console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 i18n \u5F15\u5165");
           changed = true;
@@ -89871,12 +90112,31 @@ export function useI18n() {
           console.log("  \u8B66\u544A: main.ts \u4E2D\u672A\u627E\u5230 import \u8BED\u53E5\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 i18n \u5F15\u5165");
         }
       }
+      if (content.includes(vnetImport)) {
+        console.log("  \u8DF3\u8FC7: main.ts @vnet/i18n \u5F15\u5165\u5DF2\u5B58\u5728");
+      } else {
+        const lines = content.split("\n");
+        let lastImportLine = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (/^import\s+.+/.test(lines[i].trim())) {
+            lastImportLine = i;
+          }
+        }
+        if (lastImportLine >= 0) {
+          lines.splice(lastImportLine + 1, 0, vnetImport);
+          content = lines.join("\n");
+          console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u5F15\u5165");
+          changed = true;
+        } else {
+          console.log("  \u8B66\u544A: main.ts \u4E2D\u672A\u627E\u5230 import \u8BED\u53E5\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 @vnet/i18n \u5F15\u5165");
+        }
+      }
       const globalTLine = "app.config.globalProperties.$t = $t";
       if (!content.includes(globalTLine)) {
         const lines = content.split("\n");
         let inserted = false;
         for (let i = 0; i < lines.length; i++) {
-          if (/^const\s+app\s*=\s*createApp/.test(lines[i].trim())) {
+          if (/^\s*(?:const\s+)?app\s*=\s*createApp/.test(lines[i].trim())) {
             lines.splice(
               i + 1,
               0,
@@ -89901,20 +90161,59 @@ export function useI18n() {
         const lines = content.split("\n");
         let inserted = false;
         for (let i = 0; i < lines.length; i++) {
-          if (/\.mount\(/.test(lines[i].trim())) {
-            lines.splice(i, 0, "app.use(i18n)");
+          const line = lines[i];
+          const trimmed = line.trim();
+          if (trimmed.startsWith("//") || trimmed.startsWith("/*")) continue;
+          const mountIdx = line.indexOf(".mount(");
+          if (mountIdx === -1) continue;
+          const beforeMount = line.slice(0, mountIdx).trimEnd();
+          if (!beforeMount) {
+            const indent = line.slice(0, line.length - line.trimStart().length);
+            lines.splice(i, 0, `${indent}.use(i18n)`);
+          } else if (beforeMount.endsWith(")")) {
+            lines[i] = beforeMount + ".use(i18n)" + line.slice(mountIdx);
+          } else {
+            const indent = line.slice(0, line.length - line.trimStart().length);
+            const varName = beforeMount.trim();
+            lines.splice(i, 0, `${indent}${varName}.use(i18n)`);
+          }
+          content = lines.join("\n");
+          console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 app.use(i18n)");
+          changed = true;
+          inserted = true;
+          break;
+        }
+        if (!inserted) {
+          console.log("  \u8B66\u544A: \u672A\u627E\u5230 .mount(\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 app.use(i18n)");
+        }
+      } else {
+        console.log("  \u8DF3\u8FC7: main.ts app.use(i18n) \u5DF2\u5B58\u5728");
+      }
+      const vnetSetupCode = `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C
+// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362
+const compMsgs = getComponentMessages()
+for (const locale of Object.keys(compMsgs)) {
+  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])
+}
+setI18nInstance(i18n)`;
+      if (content.includes("setI18nInstance(i18n)")) {
+        console.log("  \u8DF3\u8FC7: main.ts @vnet/i18n \u6CE8\u518C\u4EE3\u7801\u5DF2\u5B58\u5728");
+      } else {
+        const lines = content.split("\n");
+        let inserted = false;
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].trim() === ".use(i18n)" || lines[i].includes(".use(i18n)")) {
+            lines.splice(i + 1, 0, "", vnetSetupCode);
             content = lines.join("\n");
-            console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 app.use(i18n)");
+            console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
             changed = true;
             inserted = true;
             break;
           }
         }
         if (!inserted) {
-          console.log("  \u8B66\u544A: \u672A\u627E\u5230 mount\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 app.use(i18n)");
+          console.log("  \u8B66\u544A: \u672A\u627E\u5230 .use(i18n)\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
         }
-      } else {
-        console.log("  \u8DF3\u8FC7: main.ts app.use(i18n) \u5DF2\u5B58\u5728");
       }
       if (changed) {
         fs2.writeFileSync(mainFile, content, "utf-8");
@@ -90401,70 +90700,6 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       "alert",
       "confirm"
     ];
-    var AI_SYSTEM_PROMPT = `# \u89D2\u8272\u5B9A\u4E49
-\u4F60\u662F\u4E00\u4E2A\u4E25\u8C28\u7684 Vue \u9879\u76EE i18n \u56FD\u9645\u5316\u7FFB\u8BD1\u52A9\u624B\u3002\u4F60\u7684\u6838\u5FC3\u804C\u8D23\u662F\u63A5\u6536\u4E00\u6BB5\u6216\u591A\u6BB5\u4E2D\u6587\u6587\u672C\uFF0C\u5C06\u5176\u7FFB\u8BD1\u4E3A\u76EE\u6807\u8BED\u8A00\uFF0C\u5E76\u751F\u6210\u7ED3\u6784\u6E05\u6670\u3001\u8BED\u4E49\u51C6\u786E\u4E14\u7B26\u5408\u524D\u7AEF\u5DE5\u7A0B\u89C4\u8303\u7684 JSON \u6620\u5C04\u5BF9\u8C61\u3002
-
-# \u4EFB\u52A1\u76EE\u6807
-\u5C06\u8F93\u5165\u7684\u4E2D\u6587\u6587\u672C\u7FFB\u8BD1\u6210\u6307\u5B9A\u7684\u76EE\u6807\u8BED\u8A00\uFF08\u5982\u82F1\u6587\uFF09\uFF0C\u5E76\u4E3A\u6BCF\u6761\u7FFB\u8BD1\u6587\u672C\u751F\u6210\u4E00\u4E2A\u5408\u7406\u7684\u5D4C\u5957 Key\uFF0C\u6700\u7EC8\u8F93\u51FA\u4E00\u4E2A\u4E25\u683C\u7B26\u5408\u683C\u5F0F\u8981\u6C42\u7684 JSON \u5BF9\u8C61\u3002
-
-# \u786C\u6027\u89C4\u5219\uFF08\u5FC5\u987B\u9075\u5B88\uFF0C\u8FDD\u53CD\u5373\u89C6\u4E3A\u9519\u8BEF\uFF09
-
-## 1. JSON \u9876\u5C42 Key \u89C4\u5219\uFF08\u6700\u9AD8\u4F18\u5148\u7EA7\uFF09
-- \u9876\u5C42 Key **\u5FC5\u987B**\u3001**\u5F3A\u5236**\u4F7F\u7528\u8F93\u5165\u7684\u4E2D\u6587\u539F\u6587\uFF0C**\u4E00\u5B57\u4E0D\u6539**\u3002
-- \u5305\u62EC\u539F\u6587\u4E2D\u7684**\u6240\u6709\u7A7A\u683C\u3001\u6807\u70B9\u7B26\u53F7\uFF08\u5168\u89D2/\u534A\u89D2\uFF09\u3001\u7279\u6B8A\u5B57\u7B26**\u5747\u9700\u539F\u6837\u4FDD\u7559\u5728 Key \u4E2D\u3002
-- **\u4E25\u7981**\u5BF9\u539F\u6587\u8FDB\u884C\u4EFB\u4F55\u5F62\u5F0F\u7684\u4FEE\u6539\uFF0C\u5305\u62EC\u4F46\u4E0D\u9650\u4E8E\uFF1A
-  - \u274C \u5220\u9664\u4EFB\u4F55\u5B57\u7B26\uFF08\u5982\u5220\u9664\u53E5\u53F7\u3001\u95EE\u53F7\u3001\u611F\u53F9\u53F7\uFF09
-  - \u274C \u6DFB\u52A0\u4EFB\u4F55\u5B57\u7B26\uFF08\u5982\u6DFB\u52A0\u7701\u7565\u53F7 \`...\`\u3001\u53E5\u53F7\u3001\u7A7A\u683C\u7B49\uFF09
-  - \u274C \u66FF\u6362\u4EFB\u4F55\u5B57\u7B26\uFF08\u5982\u5C06\u534A\u89D2\u9017\u53F7\u6539\u4E3A\u5168\u89D2\u9017\u53F7\uFF0C\u6216\u5C06\u4E2D\u6587\u62EC\u53F7\u6539\u4E3A\u82F1\u6587\u62EC\u53F7\uFF09
-  - \u274C \u8C03\u6574\u987A\u5E8F\u6216\u6539\u53D8\u683C\u5F0F
-- \u2705 \u6B63\u786E\u793A\u4F8B\uFF1A\u539F\u6587 \`\u52A0\u8F7D\u4E2D\` \u2192 Key \u5FC5\u987B\u4E3A \`"\u52A0\u8F7D\u4E2D"\`
-- \u274C \u9519\u8BEF\u793A\u4F8B\uFF1A\u539F\u6587 \`\u52A0\u8F7D\u4E2D\` \u2192 Key \u8BEF\u5199\u4E3A \`"\u52A0\u8F7D\u4E2D..."\`\uFF08\u6DFB\u52A0\u4E86 \`...\`\uFF09
-
-## 2. \u5D4C\u5957 Value Key \u89C4\u5219
-- \u6BCF\u4E2A\u9876\u5C42 Key \u5BF9\u5E94\u7684\u503C\u662F\u4E00\u4E2A\u5BF9\u8C61\uFF0C\u8BE5\u5BF9\u8C61\u5185\u90E8\u7684 Key \u4E3A\u7FFB\u8BD1\u6761\u76EE\u7684\u552F\u4E00\u6807\u8BC6\u7B26\u3002
-- \u8BE5\u6807\u8BC6\u7B26\u5FC5\u987B\u4F7F\u7528 **camelCase\uFF08\u5C0F\u9A7C\u5CF0\uFF09** \u683C\u5F0F\u7684\u82F1\u6587\uFF0C\u5E94**\u7CBE\u51C6\u3001\u7B80\u6D01**\u5730\u6982\u62EC\u5BF9\u5E94\u4E2D\u6587\u6587\u672C\u7684\u6838\u5FC3\u542B\u4E49\u3002
-- \u5EFA\u8BAE\u683C\u5F0F\uFF1A\`{\u6A21\u5757\u524D\u7F00}{\u5177\u4F53\u52A8\u4F5C/\u540D\u8BCD}\`\uFF0C\u4F8B\u5982 \`commonConfirm\`\u3001\`formValidateError\`\u3002
-
-## 3. \u6A21\u5757\u540D\uFF08module\uFF09\u63A8\u65AD\u89C4\u5219
-\u6839\u636E\u8F93\u5165\u6587\u672C\u7684\u4F7F\u7528\u573A\u666F\uFF0C\u63A8\u65AD\u5176\u6240\u5C5E\u6A21\u5757\uFF0C\u4F5C\u4E3A\u5D4C\u5957\u5BF9\u8C61\u7684\u5206\u7EC4\u4F9D\u636E\uFF1A
-- \`common\` \u2014 \u901A\u7528\u754C\u9762\u5143\u7D20\uFF08\u5982"\u786E\u8BA4"\u3001"\u53D6\u6D88"\u3001"\u5173\u95ED"\uFF09
-- \`validation\` \u2014 \u8868\u5355\u6821\u9A8C\u63D0\u793A\uFF08\u5982"\u8BF7\u8F93\u5165\u7528\u6237\u540D"\u3001"\u5BC6\u7801\u4E0D\u80FD\u4E3A\u7A7A"\uFF09
-- \`placeholder\` \u2014 \u8F93\u5165\u6846\u5360\u4F4D\u7B26\uFF08\u5982"\u641C\u7D22\u5173\u952E\u5B57"\u3001"\u8BF7\u9009\u62E9\u65E5\u671F"\uFF09
-- \`flow\` \u2014 \u4E1A\u52A1\u6D41\u7A0B\u63CF\u8FF0\uFF08\u5982"\u63D0\u4EA4\u6210\u529F"\u3001"\u6B63\u5728\u5904\u7406\u4E2D"\uFF09
-- \`status\` \u2014 \u72B6\u6001\u63D0\u793A\uFF08\u5982"\u52A0\u8F7D\u4E2D"\u3001"\u6682\u65E0\u6570\u636E"\uFF09
-- \u82E5\u65E0\u6CD5\u660E\u786E\u5F52\u7C7B\uFF0C\u6839\u636E\u8BED\u4E49\u63A8\u65AD\u4E1A\u52A1\u9886\u57DF\uFF08\u5982 \`user\`\u3001\`order\`\u3001\`dashboard\`\uFF09
-
-## 4. \u7FFB\u8BD1\u5185\u5BB9\u89C4\u5219
-- \u7FFB\u8BD1\u4E3A\u76EE\u6807\u8BED\u8A00\u65F6\uFF0C\u5E94\u4FDD\u6301**\u8BED\u4E49\u51C6\u786E\u3001\u81EA\u7136\u6D41\u7545**\u3002
-- \u7FFB\u8BD1\u5185\u5BB9**\u4E0D\u5FC5**\u4E0E\u4E2D\u6587\u539F\u6587\u5728\u6807\u70B9\u7B26\u53F7\u4E0A\u4E25\u683C\u4E00\u4E00\u5BF9\u5E94\uFF0C\u4F46\u5E94\u9075\u5FAA\u76EE\u6807\u8BED\u8A00\u7684\u6807\u51C6\u8868\u8FBE\u4E60\u60EF\u3002
-- \u4F8B\u5982\uFF1A\u4E2D\u6587 \`\u52A0\u8F7D\u4E2D\` \u53EF\u8BD1\u4E3A \`Loading\`\uFF0C\u800C\u4E0D\u5FC5\u6DFB\u52A0 \`...\`\u3002
-
-## 5. \u8F93\u51FA\u683C\u5F0F\u8981\u6C42\uFF08\u7EDD\u5BF9\u4E25\u683C\uFF09
-- **\u6700\u7EC8\u8F93\u51FA\u5FC5\u987B\u662F\u4E00\u4E2A\u7EAF JSON \u5BF9\u8C61**\u3002
-- **\u7981\u6B62**\u5728\u8F93\u51FA\u5185\u5BB9\u524D\u540E\u6DFB\u52A0\u4EFB\u4F55\u6587\u5B57\u8BF4\u660E\u3001\u6CE8\u91CA\u3001Markdown \u4EE3\u7801\u5757\u6807\u8BB0\uFF08\u5982 \`\`\`json \u6216 \`\`\`\uFF09\u3002
-- **\u7981\u6B62**\u8F93\u51FA\u4EFB\u4F55\u89E3\u91CA\u6027\u3001\u5206\u6790\u6027\u6216\u65E0\u5173\u7684\u6587\u672C\u5185\u5BB9\u3002
-- \u786E\u4FDD JSON \u683C\u5F0F\u5408\u6CD5\uFF0C\u53EF\u88AB \`JSON.parse()\` \u76F4\u63A5\u89E3\u6790\u3002
-- \u6574\u4E2A\u8F93\u51FA\u53EA\u80FD\u5305\u542B\u4E00\u4E2A JSON \u5BF9\u8C61\uFF0C\u4E0D\u80FD\u5305\u542B\u591A\u4E2A\u9876\u5C42\u5BF9\u8C61\u6216\u6570\u7EC4\u5305\u88F9\u3002
-
-# \u7981\u6B62\u9879\u6E05\u5355\uFF08\u7EA2\u7EBF\uFF0C\u4E0D\u53EF\u89E6\u78B0\uFF09
-| \u7981\u6B62\u884C\u4E3A | \u8BF4\u660E |
-|---------|------|
-| \u4FEE\u6539\u9876\u5C42 Key \u4E2D\u7684\u4E2D\u6587\u539F\u6587 | \u5305\u62EC\u5220\u9664\u3001\u6DFB\u52A0\u3001\u66FF\u6362\u4EFB\u4F55\u5B57\u7B26\uFF0C\u54EA\u6015\u662F\u4E00\u4E2A\u7A7A\u683C\u6216\u4E00\u4E2A\u6807\u70B9 |
-| \u5728\u4E2D\u6587\u539F\u6587\u540E\u6DFB\u52A0\u7701\u7565\u53F7 \`...\` | \u5982 \`\u52A0\u8F7D\u4E2D\` \u2192 \`\u52A0\u8F7D\u4E2D...\` \u7EDD\u5BF9\u7981\u6B62 |
-| \u5728\u4E2D\u6587\u539F\u6587\u540E\u6DFB\u52A0\u53E5\u53F7\u6216\u95EE\u53F7 | \u5982 \`\u786E\u8BA4\` \u2192 \`\u786E\u8BA4\u3002\` \u7EDD\u5BF9\u7981\u6B62 |
-| \u5220\u9664\u4E2D\u6587\u539F\u6587\u4E2D\u7684\u53E5\u53F7\u3001\u95EE\u53F7\u7B49 | \u5982 \`\u63D0\u4EA4\u6210\u529F\u3002\` \u2192 \`\u63D0\u4EA4\u6210\u529F\` \u7EDD\u5BF9\u7981\u6B62 |
-| \u8F93\u51FA\u975E JSON \u683C\u5F0F\u7684\u5185\u5BB9 | \u5982\u6DFB\u52A0\u89E3\u91CA\u3001\u6CE8\u91CA\u3001Markdown \u6807\u8BB0\u7B49 |
-| \u5408\u5E76\u591A\u6761\u6587\u672C\u5230\u540C\u4E00\u4E2A Key | \u6BCF\u6761\u4E2D\u6587\u6587\u672C\u5FC5\u987B\u72EC\u7ACB\u6210\u952E |
-
-# \u91CD\u8981\u63D0\u9192
-- **\u9876\u5C42 Key \u662F\u4E2D\u6587\u539F\u6587\u7684"\u955C\u50CF"**\uFF0C\u5FC5\u987B\u505A\u5230\u5B57\u7B26\u7EA7\u522B\u7684\u4E00\u81F4\u3002
-- \u5982\u679C\u539F\u6587\u6709\u53E5\u53F7\uFF0CKey \u4E2D\u5C31\u6709\u53E5\u53F7\uFF1B\u5982\u679C\u539F\u6587\u6CA1\u6709\uFF0CKey \u4E2D\u5C31\u6CA1\u6709\u3002
-- \u5D4C\u5957 Key\uFF08\u82F1\u6587 camelCase\uFF09\u53EF\u4EE5\u81EA\u7531\u8BBE\u8BA1\uFF0C\u4E0D\u53D7\u6B64\u9650\u5236\u3002`;
-    var AI_USER_PROMPT_TEMPLATE = '\u6587\u4EF6\u8DEF\u5F84\uFF1A{filePath}\n\u76EE\u6807\u8BED\u8A00\uFF1A{targetLanguages}\n\n\u8BF7\u4E3A\u4EE5\u4E0B\u4E2D\u6587\u6587\u672C\u751F\u6210 key \u548C\u7FFB\u8BD1\uFF0C\u8F93\u51FA JSON \u683C\u5F0F\uFF1A\n{chineseTexts}\n\n\u8F93\u51FA\u683C\u5F0F\u793A\u4F8B\uFF1A\n{"\u53D1\u8D77\u4EBA": {"key": "accredit.sponsor", "en-US": "Sponsor"}, "\u8BF7\u9009\u62E9": {"key": "common.pleaseSelect", "en-US": "Please select"}}';
-    var AI_GAP_SYSTEM_PROMPT = `\u4F60\u662F\u4E00\u4E2A i18n \u7FFB\u8BD1\u52A9\u624B\u3002\u8BF7\u5C06\u7ED9\u5B9A\u7684\u4E2D\u6587\u6587\u672C\u7FFB\u8BD1\u4E3A\u6307\u5B9A\u7684\u76EE\u6807\u8BED\u8A00\u3002
-\u6BCF\u6761\u6587\u672C\u5DF2\u6709\u56FA\u5B9A\u7684 key \u8DEF\u5F84\uFF0C\u4F60\u53EA\u9700\u8981\u5C06 JSON \u4E2D\u7684\u7A7A\u5B57\u7B26\u4E32\u66FF\u6362\u4E3A\u5BF9\u5E94\u7FFB\u8BD1\u3002
-\u4E25\u683C\u4FDD\u6301 JSON \u7ED3\u6784\u4E0D\u53D8\uFF0C\u4E0D\u8981\u4FEE\u6539\u4EFB\u4F55 key\uFF0C\u4E0D\u8981\u6DFB\u52A0\u6216\u5220\u9664\u4EFB\u4F55\u5B57\u6BB5\u3002
-\u53EA\u8F93\u51FA\u586B\u5145\u540E\u7684 JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981\u6DFB\u52A0\u4EFB\u4F55\u5176\u4ED6\u5185\u5BB9\u3002`;
     var SOURCE_LANGUAGE_OPTIONS = [
       { value: "zh-CN", label: "zh-CN\uFF08\u7B80\u4F53\u4E2D\u6587\uFF09" },
       { value: "zh-TW", label: "zh-TW\uFF08\u7E41\u4F53\u4E2D\u6587\uFF09" },
@@ -90484,6 +90719,11 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       { value: "es", label: "es\uFF08\u897F\u73ED\u7259\u8BED\uFF09" },
       { value: "ru", label: "ru\uFF08\u4FC4\u8BED\uFF09" }
     ];
+    var UI_LIBRARY_OPTIONS = [
+      { value: "element-plus", label: "Element Plus" },
+      { value: "vant", label: "Vant" },
+      { value: "none", label: "\u65E0\u7EC4\u4EF6\u5E93" }
+    ];
     var KEY_STYLE_OPTIONS = [
       { value: "camelCase", label: "camelCase\uFF08\u5C0F\u9A7C\u5CF0\uFF09" },
       { value: "snake_case", label: "snake_case\uFF08\u86C7\u5F62\uFF09" },
@@ -90496,13 +90736,6 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         description: "\u9700\u8981\u56FD\u9645\u5316\u7684\u9879\u76EE\u6240\u5728\u76EE\u5F55\uFF0C\u76F8\u5BF9\u4E8E\u672C\u811A\u672C\u7684\u4F4D\u7F6E\uFF08Tab \u8865\u5168\u8DEF\u5F84\uFF09",
         type: "path",
         default: "./"
-      },
-      {
-        key: "entry",
-        title: "\u626B\u63CF\u8303\u56F4",
-        description: "\u8981\u626B\u63CF\u54EA\u4E9B\u6587\u4EF6\u3002src/**/*.vue \u8868\u793A src \u4E0B\u6240\u6709 .vue \u6587\u4EF6\uFF0Csrc/**/*.{vue,js,ts} \u8868\u793A src \u4E0B\u6240\u6709 vue/js/ts \u6587\u4EF6",
-        type: "input",
-        default: "src/**/*.vue"
       },
       {
         key: "sourceLanguage",
@@ -90530,13 +90763,6 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
     ];
     var MAIN_ITEMS = [
       {
-        key: "exclude",
-        title: "\u6392\u9664\u6587\u4EF6",
-        description: "\u4E0D\u9700\u8981\u626B\u63CF\u7684\u6587\u4EF6",
-        type: "editableList",
-        default: ["src/router.ts", "src/utils/*.ts", "src/views/print.vue"]
-      },
-      {
         key: "scanScript",
         title: "\u626B\u63CF <script> \u4E2D\u7684\u4E2D\u6587",
         description: "\u662F\u5426\u626B\u63CF Vue \u6587\u4EF6 <script> \u90E8\u5206\u7684\u4E2D\u6587",
@@ -90551,32 +90777,26 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         default: true
       },
       {
-        key: "translateAttributes",
-        title: "\u9700\u8981\u7FFB\u8BD1\u7684 HTML \u5C5E\u6027",
-        description: "\u8FD9\u4E9B\u5C5E\u6027\u4E2D\u7684\u4E2D\u6587\u4F1A\u88AB\u63D0\u53D6\u7FFB\u8BD1",
-        type: "editableList",
-        default: DEFAULT_TRANSLATE_ATTRIBUTES
-      },
-      {
-        key: "ignoreAttributes",
-        title: "\u4E0D\u7FFB\u8BD1\u7684 HTML \u5C5E\u6027",
-        description: "\u8FD9\u4E9B\u5C5E\u6027\u4E2D\u7684\u4E2D\u6587\u6C38\u8FDC\u4E0D\u7FFB\u8BD1",
-        type: "editableList",
-        default: DEFAULT_IGNORE_ATTRIBUTES
-      },
-      {
-        key: "translateMethods",
-        title: "\u9700\u8981\u7FFB\u8BD1\u7684\u65B9\u6CD5\u8C03\u7528",
-        description: "\u53EA\u6709\u8FD9\u4E9B\u65B9\u6CD5\u8C03\u7528\u4E2D\u7684\u5B57\u7B26\u4E32\u53C2\u6570\u4F1A\u88AB\u7FFB\u8BD1\uFF08\u652F\u6301\u901A\u914D\u7B26\u5982 ElMessage.*\uFF09",
-        type: "editableList",
-        default: DEFAULT_TRANSLATE_METHODS
+        key: "uiLibrary",
+        title: "\u4F7F\u7528\u7684 UI \u7EC4\u4EF6\u5E93",
+        description: "\u9009\u62E9\u9879\u76EE\u4F7F\u7528\u7684 UI \u7EC4\u4EF6\u5E93\uFF0C\u5F71\u54CD\u751F\u6210\u7684 locales/index.ts \u6A21\u677F\u548C\u7FFB\u8BD1\u65B9\u6CD5\u767D\u540D\u5355",
+        type: "select",
+        options: UI_LIBRARY_OPTIONS,
+        default: "element-plus"
       },
       {
         key: "localeStorageKey",
         title: "localStorage \u952E\u540D",
         description: "localStorage \u4E2D\u5B58\u50A8\u8BED\u8A00\u8BBE\u7F6E\u7684 key \u540D",
         type: "input",
-        default: "lang"
+        default: "ZXY_locale"
+      },
+      {
+        key: "sharedLocales",
+        title: "\u5171\u4EAB\u8BED\u8A00\u5305\u8DEF\u5F84",
+        description: "\u5916\u90E8\u5171\u4EAB\u8BED\u8A00\u5305\u76EE\u5F55\u8DEF\u5F84\uFF08\u76F8\u5BF9\u4E8E\u9879\u76EE\u6839\u76EE\u5F55\uFF09\uFF0C\u9017\u53F7\u5206\u9694\u3002\u521D\u59CB\u5316\u65F6\u4F1A import \u5E76\u5408\u5E76\u5230 i18n \u5B9E\u4F8B\u4E2D\uFF0C\u672C\u9879\u76EE\u7FFB\u8BD1\u4F18\u5148\u7EA7\u66F4\u9AD8\u3002\u65E0\u5219\u7559\u7A7A",
+        type: "input",
+        default: ""
       }
     ];
     var CONDITIONAL_ITEMS = [
@@ -90713,6 +90933,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       nested.translateMethods = ensureArray(
         nested.translateMethods || DEFAULT_TRANSLATE_METHODS
       );
+      nested.sharedLocales = ensureArray(nested.sharedLocales || []);
       const ai = nested.ai || {};
       const lines = [];
       lines.push("// i18n \u81EA\u52A8\u626B\u63CF\u914D\u7F6E");
@@ -90730,7 +90951,21 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       lines.push(`  scanScript: ${nested.scanScript !== false},`);
       lines.push("");
       lines.push("  // \u662F\u5426\u66FF\u6362\u53D8\u91CF\u58F0\u660E\u8D4B\u503C\u4E2D\u7684\u4E2D\u6587");
-      lines.push(`  scanScriptDeclarations: ${nested.scanScriptDeclarations !== false},`);
+      lines.push(
+        `  scanScriptDeclarations: ${nested.scanScriptDeclarations !== false},`
+      );
+      lines.push("");
+      lines.push("  // UI \u7EC4\u4EF6\u5E93\uFF08element-plus / vant / none\uFF09");
+      lines.push(
+        `  uiLibrary: ${JSON.stringify(nested.uiLibrary || "element-plus")},`
+      );
+      lines.push("");
+      lines.push("  // \u5171\u4EAB\u8BED\u8A00\u5305\u8DEF\u5F84\uFF08\u76F8\u5BF9\u4E8E projectPath\uFF09");
+      lines.push(
+        "  // \u521D\u59CB\u5316\u65F6\u4F1A\u5C06\u6307\u5B9A\u76EE\u5F55\u4E0B\u7684\u8BED\u8A00\u6587\u4EF6 import \u5E76\u5408\u5E76\u5230 i18n \u5B9E\u4F8B\u7684 messages \u4E2D"
+      );
+      lines.push("  // \u5F53\u524D\u9879\u76EE\u81EA\u8EAB\u7684\u7FFB\u8BD1\u4F18\u5148\u7EA7\u9AD8\u4E8E\u5171\u4EAB\u8BED\u8A00\u5305\uFF08\u9879\u76EE\u8986\u76D6\u5171\u4EAB\uFF09");
+      lines.push(`  sharedLocales: ${JSON.stringify(nested.sharedLocales)},`);
       lines.push("");
       lines.push("  // \u8F93\u51FA\u76EE\u5F55");
       lines.push(`  output: ${JSON.stringify(nested.output || "src/locales")},`);
@@ -90742,7 +90977,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       );
       lines.push(`  targetLanguages: ${JSON.stringify(nested.targetLanguages)},`);
       lines.push(
-        `  localeStorageKey: ${JSON.stringify(nested.localeStorageKey || "lang")},`
+        `  localeStorageKey: ${JSON.stringify(nested.localeStorageKey || "ZXY_locale")},`
       );
       lines.push("");
       lines.push("  // \u9700\u8981\u7FFB\u8BD1\u7684 HTML \u5C5E\u6027");
@@ -90785,20 +91020,6 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       lines.push("");
       lines.push("    // \u6BCF\u6279\u6700\u591A\u7FFB\u8BD1\u6761\u6570");
       lines.push(`    batchSize: ${Number(ai.batchSize) || 200},`);
-      lines.push("");
-      lines.push("    // \u7CFB\u7EDF\u63D0\u793A\u8BCD");
-      lines.push(`    systemPrompt: ${JSON.stringify(AI_SYSTEM_PROMPT)},`);
-      lines.push("");
-      lines.push("    // \u7528\u6237\u63D0\u793A\u8BCD\u6A21\u677F");
-      lines.push(
-        `    userPromptTemplate: ${JSON.stringify(AI_USER_PROMPT_TEMPLATE)},`
-      );
-      lines.push("");
-      lines.push("    // \u7F3A\u53E3\u8865\u9F50\u7FFB\u8BD1\u7684\u7CFB\u7EDF\u63D0\u793A\u8BCD");
-      lines.push(`    gapSystemPrompt: ${JSON.stringify(AI_GAP_SYSTEM_PROMPT)},`);
-      lines.push("");
-      lines.push("    // \u7F3A\u53E3\u8865\u9F50\u7FFB\u8BD1\u7684\u7528\u6237\u63D0\u793A\u8BCD\u6A21\u677F");
-      lines.push(`    gapUserPromptTemplate: '',`);
       lines.push("  },");
       lines.push("}");
       lines.push("");
@@ -90834,11 +91055,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         console.log(bold("--- \u626B\u63CF\u4E0E\u5C5E\u6027\u914D\u7F6E ---"));
         console.log("");
         for (const item of MAIN_ITEMS) {
-          const defaultValue = getConfigValue(
-            existingConfig,
-            item.key,
-            item.default
-          );
+          let defaultValue = getConfigValue(existingConfig, item.key, item.default);
           if (item.key === "scanScriptDeclarations" && newConfig.scanScript === false) {
             newConfig[item.key] = false;
             continue;
@@ -90849,6 +91066,28 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
           console.log(`  \u2192 ${green(formatValue(value, item.type))}`);
           console.log("");
         }
+        newConfig.entry = getConfigValue(existingConfig, "entry", ["src/**/*.vue"]);
+        newConfig.exclude = getConfigValue(existingConfig, "exclude", []);
+        newConfig.translateAttributes = getConfigValue(
+          existingConfig,
+          "translateAttributes",
+          DEFAULT_TRANSLATE_ATTRIBUTES
+        );
+        newConfig.ignoreAttributes = getConfigValue(
+          existingConfig,
+          "ignoreAttributes",
+          DEFAULT_IGNORE_ATTRIBUTES
+        );
+        const UI_TRANSLATE_METHODS_MAP = {
+          "element-plus": DEFAULT_TRANSLATE_METHODS,
+          vant: ["Toast", "Toast.*"],
+          none: []
+        };
+        newConfig.translateMethods = getConfigValue(
+          existingConfig,
+          "translateMethods",
+          UI_TRANSLATE_METHODS_MAP[newConfig.uiLibrary] || DEFAULT_TRANSLATE_METHODS
+        );
         if (newConfig["ai.enabled"]) {
           console.log(bold("--- AI \u7FFB\u8BD1\u914D\u7F6E ---"));
           console.log("");
@@ -90866,35 +91105,12 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
             console.log("");
           }
         }
-        console.log(bold("--- \u9AD8\u7EA7\u914D\u7F6E ---"));
-        console.log("");
-        const showAdvanced = await prompt.confirm(
-          "\u662F\u5426\u4FEE\u6539\u9AD8\u7EA7\u914D\u7F6E\uFF1F",
-          null,
-          false
-        );
-        if (showAdvanced) {
-          console.log("");
-          for (const item of ADVANCED_ITEMS) {
-            const defaultValue = getConfigValue(
-              existingConfig,
-              item.key,
-              item.default
-            );
-            console.log(`${bold(item.title)}`);
-            const value = await askItem(prompt, item, defaultValue, existingConfig);
-            newConfig[item.key] = value;
-            console.log(`  \u2192 ${green(formatValue(value, item.type))}`);
-            console.log("");
-          }
-        } else {
-          for (const item of ADVANCED_ITEMS) {
-            newConfig[item.key] = getConfigValue(
-              existingConfig,
-              item.key,
-              item.default
-            );
-          }
+        for (const item of ADVANCED_ITEMS) {
+          newConfig[item.key] = getConfigValue(
+            existingConfig,
+            item.key,
+            item.default
+          );
         }
         console.log(bold("--- \u914D\u7F6E\u6458\u8981 ---"));
         console.log("");
@@ -90970,7 +91186,17 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
           Array.isArray(config.exclude) ? `${config.exclude.length} \u9879` : config.exclude || "(\u65E0)"
         ],
         ["\u626B\u63CF script", config.scanScript !== false ? "\u662F" : "\u5426"],
-        ...config.scanScript !== false ? [["\u66FF\u6362\u53D8\u91CF\u58F0\u660E", config.scanScriptDeclarations !== false ? "\u662F" : "\u5426"]] : [],
+        ...config.scanScript !== false ? [
+          [
+            "\u66FF\u6362\u53D8\u91CF\u58F0\u660E",
+            config.scanScriptDeclarations !== false ? "\u662F" : "\u5426"
+          ]
+        ] : [],
+        ["UI \u7EC4\u4EF6\u5E93", config.uiLibrary || "element-plus"],
+        [
+          "\u5171\u4EAB\u8BED\u8A00\u5305",
+          Array.isArray(config.sharedLocales) && config.sharedLocales.length > 0 ? config.sharedLocales.join(", ") : "(\u65E0)"
+        ],
         ["\u6E90\u7801\u8BED\u8A00", config.sourceLanguage],
         [
           "\u76EE\u6807\u8BED\u8A00",
@@ -91020,6 +91246,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
 // scripts/i18n-scan/index.cjs
 var path = require("path");
 var fs = require("fs");
+var { execSync } = require("child_process");
 var { scanFiles } = require_scanner();
 var {
   loadLocaleReverseMap,
@@ -91047,9 +91274,47 @@ function confirm(question, defaultYes = true) {
     });
   });
 }
+function detectPackageManager(projectRoot) {
+  if (fs.existsSync(path.join(projectRoot, "pnpm-lock.yaml"))) return "pnpm";
+  if (fs.existsSync(path.join(projectRoot, "yarn.lock"))) return "yarn";
+  return "npm";
+}
+function ensureVueI18n(projectRoot) {
+  const pkgPath = path.join(projectRoot, "package.json");
+  if (!fs.existsSync(pkgPath)) {
+    console.log("  \u8B66\u544A: \u672A\u627E\u5230 package.json\uFF0C\u8DF3\u8FC7 vue-i18n \u4F9D\u8D56\u68C0\u67E5");
+    return;
+  }
+  let pkg;
+  try {
+    pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+  } catch (err) {
+    console.log(`  \u8B66\u544A: package.json \u89E3\u6790\u5931\u8D25: ${err.message}`);
+    return;
+  }
+  const allDeps = {
+    ...pkg.dependencies || {},
+    ...pkg.devDependencies || {}
+  };
+  if ("vue-i18n" in allDeps) {
+    console.log("  \u2713 vue-i18n \u4F9D\u8D56\u5DF2\u5B89\u88C5");
+    return;
+  }
+  const pm = detectPackageManager(projectRoot);
+  const installCmd = pm === "yarn" ? "yarn add vue-i18n" : pm === "pnpm" ? "pnpm add vue-i18n" : "npm install vue-i18n";
+  console.log(`  \u26A0 \u672A\u68C0\u6D4B\u5230 vue-i18n \u4F9D\u8D56\uFF0C\u6B63\u5728\u81EA\u52A8\u5B89\u88C5...`);
+  console.log(`  > ${installCmd}`);
+  try {
+    execSync(installCmd, { cwd: projectRoot, stdio: "inherit" });
+    console.log("  \u2713 vue-i18n \u5B89\u88C5\u5B8C\u6210");
+  } catch (err) {
+    console.log(`  \u2717 vue-i18n \u5B89\u88C5\u5931\u8D25: ${err.message}`);
+    console.log("  \u8BF7\u624B\u52A8\u5B89\u88C5: " + installCmd);
+  }
+}
 async function loadConfig() {
   const configPath = path.join(SCRIPT_DIR, "i18n.config.js");
-  const configUrl = `file://${configPath.replace(/\\/g, "/")}`;
+  const configUrl = `file://${configPath.replace(/\\/g, "/")}?t=${Date.now()}`;
   const mod = await import(configUrl);
   const config = mod.default || mod;
   return normalizeConfig(config);
@@ -91075,7 +91340,9 @@ function normalizeConfig(config) {
       "confirm"
     ],
     logDir: config.logDir || "logs",
-    ai: config.ai || { enabled: false }
+    ai: config.ai || { enabled: false },
+    uiLibrary: config.uiLibrary || "element-plus",
+    sharedLocales: config.sharedLocales || []
   };
 }
 function parseArgs() {
@@ -91121,7 +91388,8 @@ async function main() {
   }
   if (mode === "all") {
     console.log("========== \u5168\u6D41\u7A0B\u6A21\u5F0F\uFF1Ainit \u2192 translate \u2192 scan ==========\n");
-    console.log("[1/3] \u521D\u59CB\u5316...");
+    ensureVueI18n(PROJECT_ROOT);
+    console.log("\n[1/3] \u521D\u59CB\u5316...");
     await runInit(config, PROJECT_ROOT);
     console.log("\n[2/3] AI \u7FFB\u8BD1...");
     await translateViaAI(config, PROJECT_ROOT);
@@ -91158,9 +91426,13 @@ async function runInteractiveFlow() {
     process.exit(1);
   }
   PROJECT_ROOT = path.resolve(config.projectPath || SCRIPT_DIR);
+  ensureVueI18n(PROJECT_ROOT);
   console.log("");
   printSeparator("\u6B65\u9AA4 1/4: \u521D\u59CB\u5316");
-  await runInit(config, PROJECT_ROOT);
+  await runInit(config, PROJECT_ROOT, {
+    interactive: true,
+    confirmFn: confirm
+  });
   if (!await confirm("\n\u521D\u59CB\u5316\u5B8C\u6210\uFF0C\u662F\u5426\u7EE7\u7EED\uFF1F")) {
     console.log("\u5DF2\u9000\u51FA");
     return;

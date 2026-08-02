@@ -7,6 +7,79 @@ const path = require('path')
 const fs = require('fs')
 const { scanFiles } = require('./scanner.cjs')
 const { loadLocaleReverseMap } = require('./generators/locale-manager.cjs')
+const { countKeys, validateLocalePaths } = require('./utils/validate-locales.cjs')
+
+// ============================================================
+// AI 提示词（内部常量，不暴露给用户配置）
+// ============================================================
+
+const AI_SYSTEM_PROMPT = `# 角色定义
+你是一个严谨的 Vue 项目 i18n 国际化翻译助手。你的核心职责是接收一段或多段中文文本，将其翻译为目标语言，并生成结构清晰、语义准确且符合前端工程规范的 JSON 映射对象。
+
+# 任务目标
+将输入的中文文本翻译成指定的目标语言（如英文），并为每条翻译文本生成一个合理的嵌套 Key，最终输出一个严格符合格式要求的 JSON 对象。
+
+# 硬性规则（必须遵守，违反即视为错误）
+
+## 1. JSON 顶层 Key 规则（最高优先级）
+- 顶层 Key **必须**、**强制**使用输入的中文原文，**一字不改**。
+- 包括原文中的**所有空格、标点符号（全角/半角）、特殊字符**均需原样保留在 Key 中。
+- **严禁**对原文进行任何形式的修改，包括但不限于：
+  - ❌ 删除任何字符（如删除句号、问号、感叹号）
+  - ❌ 添加任何字符（如添加省略号 \`...\`、句号、空格等）
+  - ❌ 替换任何字符（如将半角逗号改为全角逗号，或将中文括号改为英文括号）
+  - ❌ 调整顺序或改变格式
+- ✅ 正确示例：原文 \`加载中\` → Key 必须为 \`"加载中"\`
+- ❌ 错误示例：原文 \`加载中\` → Key 误写为 \`"加载中..."\`（添加了 \`...\`）
+
+## 2. 嵌套 Value Key 规则
+- 每个顶层 Key 对应的值是一个对象，该对象内部的 Key 为翻译条目的唯一标识符。
+- 该标识符必须使用 **camelCase（小驼峰）** 格式的英文，应**精准、简洁**地概括对应中文文本的核心含义。
+- 建议格式：\`{模块前缀}{具体动作/名词}\`，例如 \`commonConfirm\`、\`formValidateError\`。
+
+## 3. 模块名（module）推断规则
+根据输入文本的使用场景，推断其所属模块，作为嵌套对象的分组依据：
+- \`common\` — 通用界面元素（如"确认"、"取消"、"关闭"）
+- \`validation\` — 表单校验提示（如"请输入用户名"、"密码不能为空"）
+- \`placeholder\` — 输入框占位符（如"搜索关键字"、"请选择日期"）
+- \`flow\` — 业务流程描述（如"提交成功"、"正在处理中"）
+- \`status\` — 状态提示（如"加载中"、"暂无数据"）
+- 若无法明确归类，根据语义推断业务领域（如 \`user\`、\`order\`、\`dashboard\`）
+
+## 4. 翻译内容规则
+- 翻译为目标语言时，应保持**语义准确、自然流畅**。
+- 翻译内容**不必**与中文原文在标点符号上严格一一对应，但应遵循目标语言的标准表达习惯。
+- 例如：中文 \`加载中\` 可译为 \`Loading\`，而不必添加 \`...\`。
+
+## 5. 输出格式要求（绝对严格）
+- **最终输出必须是一个纯 JSON 对象**。
+- **禁止**在输出内容前后添加任何文字说明、注释、Markdown 代码块标记（如 \`\`\`json 或 \`\`\`）。
+- **禁止**输出任何解释性、分析性或无关的文本内容。
+- 确保 JSON 格式合法，可被 \`JSON.parse()\` 直接解析。
+- 整个输出只能包含一个 JSON 对象，不能包含多个顶层对象或数组包裹。
+
+# 禁止项清单（红线，不可触碰）
+| 禁止行为 | 说明 |
+|---------|------|
+| 修改顶层 Key 中的中文原文 | 包括删除、添加、替换任何字符，哪怕是一个空格或一个标点 |
+| 在中文原文后添加省略号 \`...\` | 如 \`加载中\` → \`加载中...\` 绝对禁止 |
+| 在中文原文后添加句号或问号 | 如 \`确认\` → \`确认。\` 绝对禁止 |
+| 删除中文原文中的句号、问号等 | 如 \`提交成功。\` → \`提交成功\` 绝对禁止 |
+| 输出非 JSON 格式的内容 | 如添加解释、注释、Markdown 标记等 |
+| 合并多条文本到同一个 Key | 每条中文文本必须独立成键 |
+
+# 重要提醒
+- **顶层 Key 是中文原文的"镜像"**，必须做到字符级别的一致。
+- 如果原文有句号，Key 中就有句号；如果原文没有，Key 中就没有。
+- 嵌套 Key（英文 camelCase）可以自由设计，不受此限制。`
+
+const AI_USER_PROMPT_TEMPLATE =
+  '文件路径：{filePath}\n目标语言：{targetLanguages}\n\n请为以下中文文本生成 key 和翻译，输出 JSON 格式：\n{chineseTexts}\n\n输出格式示例：\n{"发起人": {"key": "accredit.sponsor", "en-US": "Sponsor"}, "请选择": {"key": "common.pleaseSelect", "en-US": "Please select"}}'
+
+const AI_GAP_SYSTEM_PROMPT = `你是一个 i18n 翻译助手。请将给定的中文文本翻译为指定的目标语言。
+每条文本已有固定的 key 路径，你只需要将 JSON 中的空字符串替换为对应翻译。
+严格保持 JSON 结构不变，不要修改任何 key，不要添加或删除任何字段。
+只输出填充后的 JSON 对象，不要添加任何其他内容。`
 
 /**
  * 主入口：扫描 + 去重 + AI 翻译 + 写回
@@ -335,9 +408,10 @@ async function callAiApi(aiConfig, chineseTexts, targetLanguages) {
     model,
     temperature,
     maxTokens,
-    systemPrompt,
-    userPromptTemplate,
   } = aiConfig
+
+  const systemPrompt = aiConfig.systemPrompt || AI_SYSTEM_PROMPT
+  const userPromptTemplate = aiConfig.userPromptTemplate || AI_USER_PROMPT_TEMPLATE
 
   // 构建 user prompt
   const chineseTextsStr = chineseTexts.join('\n')
@@ -511,27 +585,8 @@ function writeUnmatchedLog(config, projectRoot, unmatched) {
 }
 
 /**
- * 递归统计 JSON 对象中叶子节点（字符串值）的数量
- * @param {object} obj - 语言包 JSON 对象
- * @returns {number}
- */
-function countKeys(obj) {
-  let count = 0
-  for (const key of Object.keys(obj)) {
-    if (typeof obj[key] === 'string') {
-      count++
-    } else if (typeof obj[key] === 'object' && obj[key] !== null) {
-      count += countKeys(obj[key])
-    }
-  }
-  return count
-}
-
-/**
  * 校验参考语言包的完整性（阻塞性）
- * 1. 路径必须存在
- * 2. targetLanguages 中的每种语言必须有对应文件
- * 3. 各语言文件的 key 数量必须与 zh-CN 一致
+ * 复用 validateLocalePaths，失败时直接退出进程
  * @param {string[]} refLocales - 参考语言包路径列表
  * @param {string} projectRoot - 项目根目录
  * @param {string} sourceLang - 源语言
@@ -543,69 +598,18 @@ function validateReferenceLocales(
   sourceLang,
   targetLangs
 ) {
-  if (!refLocales || refLocales.length === 0) return
-
-  for (const refPath of refLocales) {
-    const absRefPath = path.resolve(projectRoot, refPath)
-
-    // 1. 路径存在
-    if (!fs.existsSync(absRefPath)) {
-      console.error(`\n参考语言包校验失败: 路径不存在`)
-      console.error(`  路径: ${absRefPath}`)
-      process.exit(1)
+  const { valid, errors } = validateLocalePaths(
+    refLocales,
+    projectRoot,
+    sourceLang,
+    targetLangs
+  )
+  if (!valid) {
+    console.error(`\n参考语言包校验失败:`)
+    for (const err of errors) {
+      console.error(`  - ${err}`)
     }
-
-    // 2. 每种语言文件存在
-    const allLangs = [
-      sourceLang,
-      ...targetLangs.filter((l) => l !== sourceLang),
-    ]
-    for (const lang of allLangs) {
-      const langFile = path.join(absRefPath, `${lang}.json`)
-      if (!fs.existsSync(langFile)) {
-        console.error(`\n参考语言包校验失败: 缺少语言文件`)
-        console.error(`  路径: ${absRefPath}`)
-        console.error(`  缺少: ${lang}.json`)
-        console.error(`  需要: ${allLangs.map((l) => `${l}.json`).join(', ')}`)
-        process.exit(1)
-      }
-    }
-
-    // 3. key 数量一致
-    const sourceFile = path.join(absRefPath, `${sourceLang}.json`)
-    let sourceData
-    try {
-      sourceData = JSON.parse(fs.readFileSync(sourceFile, 'utf-8'))
-    } catch (err) {
-      console.error(`\n参考语言包校验失败: 无法解析 ${sourceLang}.json`)
-      console.error(`  路径: ${absRefPath}`)
-      console.error(`  错误: ${err.message}`)
-      process.exit(1)
-    }
-    const sourceKeyCount = countKeys(sourceData)
-
-    for (const lang of targetLangs) {
-      if (lang === sourceLang) continue
-      const langFile = path.join(absRefPath, `${lang}.json`)
-      let langData
-      try {
-        langData = JSON.parse(fs.readFileSync(langFile, 'utf-8'))
-      } catch (err) {
-        console.error(`\n参考语言包校验失败: 无法解析 ${lang}.json`)
-        console.error(`  路径: ${absRefPath}`)
-        console.error(`  错误: ${err.message}`)
-        process.exit(1)
-      }
-      const langKeyCount = countKeys(langData)
-
-      if (langKeyCount !== sourceKeyCount) {
-        console.error(`\n参考语言包校验失败: key 数量不一致`)
-        console.error(`  路径: ${absRefPath}`)
-        console.error(`  ${sourceLang}.json: ${sourceKeyCount} 条`)
-        console.error(`  ${lang}.json: ${langKeyCount} 条`)
-        process.exit(1)
-      }
-    }
+    process.exit(1)
   }
 }
 
@@ -684,16 +688,6 @@ function getNestedValue(obj, keyPath) {
 }
 
 /**
- * 缺口翻译的默认系统提示词（用户未在 config 中配置时使用）
- */
-function getDefaultGapSystemPrompt() {
-  return `你是一个 i18n 翻译助手。请将给定的中文文本翻译为指定的目标语言。
-每条文本已有固定的 key 路径，你只需要将 JSON 中的空字符串替换为对应翻译。
-严格保持 JSON 结构不变，不要修改任何 key，不要添加或删除任何字段。
-只输出填充后的 JSON 对象，不要添加任何其他内容。`
-}
-
-/**
  * 调用 AI API 进行缺口翻译（填空式）
  * @param {object} aiConfig - AI 配置
  * @param {object[]} batch - 本批缺口条目 [{ fullKey, chineseText, missingLangs }]
@@ -734,7 +728,7 @@ async function callAiApiForGaps(
   }
 
   // 使用 gap 专用提示词或默认值
-  const systemPrompt = aiConfig.gapSystemPrompt || getDefaultGapSystemPrompt()
+  const systemPrompt = aiConfig.gapSystemPrompt || AI_GAP_SYSTEM_PROMPT
 
   let finalUserPrompt
   if (aiConfig.gapUserPromptTemplate) {
@@ -909,5 +903,4 @@ module.exports = {
   translateViaAI,
   findTranslationGaps,
   validateReferenceLocales,
-  countKeys,
 }

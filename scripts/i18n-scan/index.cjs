@@ -144,6 +144,7 @@ function normalizeConfig(config) {
     logDir: config.logDir || "logs",
     ai: config.ai || { enabled: false },
     uiLibrary: config.uiLibrary || "element-plus",
+    sharedLocales: config.sharedLocales || [],
   };
 }
 
@@ -277,7 +278,10 @@ async function runInteractiveFlow() {
   // ========== Step 1: 初始化 ==========
   console.log("");
   printSeparator("步骤 1/4: 初始化");
-  await runInit(config, PROJECT_ROOT);
+  await runInit(config, PROJECT_ROOT, {
+    interactive: true,
+    confirmFn: confirm,
+  });
 
   if (!(await confirm("\n初始化完成，是否继续？"))) {
     console.log("已退出");
