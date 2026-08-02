@@ -128,6 +128,84 @@ function shouldSkipByInit(init) {
 - 已有 `$t()` 调用 — 跳过
 - 注释、console — 跳过
 
+### 扫描结果条目扩展
+
+为支持 `scriptReactive`，script-parser 返回的结果条目需新增变量元数据字段：
+
+```js
+{
+  // 原有字段
+  line,            // 行号
+  chineseText,     // 中文文本
+  type,            // 'script-string' | 'template-literal' | ...
+  context,         // 上下文源码
+
+  // 新增字段（仅 scriptTargets 匹配的变量声明有此字段）
+  varName,         // 所属变量名，如 'columns'
+  isConst,         // 是否 const 声明（let 不包裹 computed）
+  initStartLine,   // 变量 init 起始行
+  initStartCol,    // 变量 init 起始列
+  initEndLine,     // 变量 init 结束行
+  initEndCol,      // 变量 init 结束列
+}
+```
+
+这些字段由 script-parser 产出，replacer 消费。replacer 按 `varName` 分组同一变量的所有条目，按 `isConst` + `scriptReactive` 配置决定是否包裹 `computed(() => ...)`。
+
+### 扫描器 TS/JS 文件分支
+
+`scanner.cjs` 需按文件扩展名分流，`.vue` 走 SFC 解析（含 template），`.ts`/`.js` 直接走 script 解析（无 template）：
+
+```js
+for (const filePath of files) {
+  const source = fs.readFileSync(filePath, 'utf-8')
+
+  if (filePath.endsWith('.vue')) {
+    const { results, errors } = parseVueFile(filePath, source, config)
+    allResults.push(...results)
+  } else if (filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+    const scriptResults = parseScript(source, config.translateMethods, 0,
+      config.scriptTargets)
+    scriptResults.forEach(r => { r.file = filePath; r.section = 'script' })
+    allResults.push(...scriptResults)
+  }
+}
+```
+
+### shouldSkipByInit 明确说明
+
+**规则：变量 init 为函数调用（且非 ref/reactive）或 AwaitExpression 时，跳过该变量，不翻译其中的中文。**
+
+这是因为此类初始化大概率来自接口返回数据、函数返回值等动态内容，其中的中文字符串不应被静态替换。
+
+```js
+// 会跳过（接口数据 / 非响应式函数调用）
+const data = fetchData()          // CallExpression
+const list = await getList()      // AwaitExpression
+const msg = someFunction('中文')  // CallExpression
+
+// 不会跳过（Vue 响应式声明）
+const form = ref({ label: '中文' })      // 继续处理
+const state = reactive({ title: '中文' }) // 继续处理
+
+// 不会跳过（非函数调用）
+const columns = [{ label: '中文' }]      // 继续处理
+const label = '中文'                     // 继续处理
+```
+
+### Replacer computed 包裹 + import 注入
+
+`scriptReactive: true` 时：
+- 对 `isConst: true` 的变量声明，在其 init 表达式外包 `computed(() => ...)`
+- 检测是否需要注入 `import { computed } from 'vue'`：
+  - 已有 `import { ... computed ... } from 'vue'` → 不注入
+  - 无 vue import → 新增 `import { computed } from 'vue'`
+  - 有 vue import 但不含 computed → 在已有 import 中追加 `computed`
+
+`scriptReactive: false`（默认）：
+- 不包裹 computed，不注入 computed import
+- 仅逐行替换中文 → `$t('key')`，注入 `import { $t }`
+
 ---
 
 ## 四、替换产物
@@ -192,10 +270,10 @@ let dynamicCols = [{ label: '姓名' }]
 | 文件 | 改动 |
 |------|------|
 | `i18n.config.js` | 删 `scanScriptDeclarations`，加 `scriptTargets`、`scriptReactive` |
-| `script-parser.cjs` | 重写：删 ~230 行旧逻辑（TemplateLiteral 复杂处理、BinaryExpression 拼接、isInVariableDeclarator 等），新增正向属性匹配 + 上下文感知 + 递归拍平 |
-| `vue-sfc-parser.cjs` | 透传 `scriptTargets` 给 script parser |
-| `replacer.cjs` | 删 `template-literal` 重建逻辑（移入 script-parser），新增 `computed` 包裹 + `import` 注入（需区分 const/let） |
-| `scanner.cjs` | 扩展 `entry` 支持 `.ts`/`.js` 文件 |
+| `script-parser.cjs` | 重写：删 ~230 行旧逻辑（TemplateLiteral 复杂处理、BinaryExpression 拼接、isInVariableDeclarator 等），新增正向属性匹配 + 上下文感知 + 递归拍平。**扫描结果条目新增变量元数据字段**（见下方） |
+| `vue-sfc-parser.cjs` | 透传 `scriptTargets` 给 script parser；`.vue` 文件解析逻辑不变 |
+| `replacer.cjs` | 保留 `template-literal` 重建逻辑（维持 parser/replacer 职责分离），新增 `computed` 包裹 + `import` 注入（需区分 const/let） |
+| `scanner.cjs` | 扩展 `entry` 支持 `.ts`/`.js` 文件：`.vue` → `parseVueFile`，`.ts`/`.js` → 直接 `parseScript`（不需要 template 解析） |
 | `setup.cjs` | 交互对话中增加 `scriptTargets` 和 `scriptReactive` 配置项 |
 
 ### script-parser.cjs 核心改动

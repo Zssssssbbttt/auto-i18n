@@ -11,9 +11,10 @@ const fs = require('fs')
  * @param {string} filePath - 文件绝对路径
  * @param {object[]} items - 该文件的匹配结果
  * @param {object} reverseMap - locale 反向映射 { 中文: 'module.key' }
+ * @param {boolean} scriptReactive - 是否对 const 变量包裹 computed
  * @returns {{ changed: boolean, newKeys: string[] }}
  */
-function replaceInFile(filePath, items, reverseMap) {
+function replaceInFile(filePath, items, reverseMap, scriptReactive = false) {
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n')
   const newKeys = []
   let changed = false
@@ -39,7 +40,6 @@ function replaceInFile(filePath, items, reverseMap) {
   }
 
   // 处理 template-literal 类型：按行列范围分组，整体重建模板字符串
-  // 例如：const msg = `共${total}条记录` → const msg = `${$t('key1')}${total}${$t('key2')}`
   const templateLiteralGroups = {}
   for (const lineIdx of Object.keys(byLine)) {
     const lineItems = byLine[lineIdx]
@@ -83,7 +83,7 @@ function replaceInFile(filePath, items, reverseMap) {
       }
     }
 
-    // 重建模板字符串：`静态中文${expr}静态中文` → `${$t('key')}${expr}${$t('key')}`
+    // 重建模板字符串
     let newTemplate = '`'
     for (let i = 0; i < group.quasis.length; i++) {
       if (quasiKeyMap[i] !== undefined) {
@@ -136,7 +136,7 @@ function replaceInFile(filePath, items, reverseMap) {
         start = idx
         end = idx + item.chineseText.length
 
-        // script-string / dynamic-attr / interpolation：去掉外围引号 '中文' → $t('key')
+        // script-string / dynamic-attr / interpolation：去掉外围引号
         if (
           item.type === 'script-string' ||
           item.type === 'dynamic-attr' ||
@@ -163,27 +163,93 @@ function replaceInFile(filePath, items, reverseMap) {
     lines[lineIdx] = line
   }
 
+  // scriptReactive: 对 const 变量包裹 computed(() => ...)
+  if (scriptReactive) {
+    wrapWithComputed(lines, items)
+    changed = true  // 只要有 scriptReactive 匹配的变量，视为有变更
+  }
+
   if (changed) {
     fs.writeFileSync(filePath, lines.join('\n'), 'utf-8')
-    // 替换后检查并注入 import { $t }
-    injectImportT(filePath)
+    // 替换后检查并注入 import
+    injectImports(filePath)
   }
 
   return { changed, newKeys }
 }
 
 /**
- * 检查 Vue 文件是否使用了 $t() 但没有 import，自动补全
+ * 对 scriptTargets 中 const 声明的变量包裹 computed(() => ...)
+ * 按 varName 去重，从后往前包裹避免行号偏移
+ */
+function wrapWithComputed(lines, allItems) {
+  // 收集有 varName 的条目，按 varName 去重
+  const varGroups = {}
+  for (const item of allItems) {
+    if (!item.varName || !item.isConst) continue
+    // 同一变量只保留第一个（元数据相同）
+    if (!varGroups[item.varName]) {
+      varGroups[item.varName] = item
+    }
+  }
+
+  const entries = Object.values(varGroups)
+  if (entries.length === 0) return
+
+  // 从后往前处理，避免行号偏移
+  entries.sort((a, b) => b.initStartLine - a.initStartLine)
+
+  for (const meta of entries) {
+    wrapSingleInit(lines, meta)
+  }
+}
+
+/**
+ * 包裹单个变量声明的 init 表达式为 computed(() => ...)
+ */
+function wrapSingleInit(lines, meta) {
+  const startIdx = meta.initStartLine - 1
+  if (startIdx < 0 || startIdx >= lines.length) return
+
+  const startLine = lines[startIdx]
+
+  // 找到变量声明中的 "=" 位置（在 init 开始列之前）
+  const eqIdx = startLine.lastIndexOf('=', meta.initStartCol)
+  if (eqIdx < 0) return
+
+  const prefix = startLine.slice(0, eqIdx + 1)
+  const after = startLine.slice(eqIdx + 1)
+
+  if (meta.initStartLine === meta.initEndLine) {
+    // 单行：const columns = expr → const columns = computed(() => expr)
+    lines[startIdx] = prefix + ' computed(() =>' + after + ')'
+  } else {
+    // 多行：在 "=" 后插入 "computed(() =>"，末尾加 ")"
+    lines[startIdx] = prefix + ' computed(() =>' + after
+    const endIdx = meta.initEndLine - 1
+    if (endIdx >= 0 && endIdx < lines.length) {
+      lines[endIdx] = lines[endIdx] + ')'
+    }
+  }
+}
+
+/**
+ * 检查文件是否使用了 $t() 但没有 import，自动补全
+ * 同时检查 computed() 是否需要注入
  * @param {string} filePath - 文件绝对路径
  */
-function injectImportT(filePath) {
+function injectImports(filePath) {
   const content = fs.readFileSync(filePath, 'utf-8')
 
-  // 检查是否使用了 $t()
-  if (!/\$t\(/.test(content)) return
+  const usesT = /\$t\(/.test(content)
+  const usesComputed = /computed\(/.test(content)
+
+  if (!usesT && !usesComputed) return
 
   // 检查是否已有 import { $t } 或 import { ... $t ... }
-  if (/import\s*\{[^}]*\$t[^}]*\}\s*from/.test(content)) return
+  const hasImportT = /import\s*\{[^}]*\$t[^}]*\}\s*from/.test(content)
+  // 检查是否已有 import { computed } 或 import { ... computed ... }
+  const hasImportComputed = /import\s*\{[^}]*computed[^}]*\}\s*from/.test(content)
 
   // 找到 <script> 或 <script setup> 标签
   const scriptMatch = content.match(/<script\b[^>]*>/)
@@ -205,31 +271,38 @@ function injectImportT(filePath) {
     lastImportEnd = match.index + match[0].length
   }
 
-  let insertPos
-  let newContent
+  let newContent = content
+
+  // 需要注入的 import 语句
+  const importsToAdd = []
+  if (usesT && !hasImportT) {
+    importsToAdd.push("import { $t } from '@/locales'")
+  }
+  if (usesComputed && !hasImportComputed) {
+    importsToAdd.push("import { computed } from 'vue'")
+  }
+
+  if (importsToAdd.length === 0) return
+
+  const importBlock = importsToAdd.join('\n') + '\n'
 
   if (lastImportEnd >= 0) {
     // 在最后一个 import 之后插入
-    insertPos = afterTagIdx + lastImportEnd
-    // 找到该行末尾的换行符之后
+    let insertPos = afterTagIdx + lastImportEnd
     const afterImport = content.indexOf('\n', insertPos)
     insertPos = afterImport >= 0 ? afterImport + 1 : insertPos
     newContent =
-      content.slice(0, insertPos) +
-      `import { $t } from '@/locales'\n` +
-      content.slice(insertPos)
+      content.slice(0, insertPos) + importBlock + content.slice(insertPos)
   } else {
     // 没有 import 语句，插入到 <script> 标签后的第一行
-    insertPos = afterTagIdx
-    // 跳过标签后的换行符
+    let insertPos = afterTagIdx
     let idx = insertPos
     while (idx < content.length && content[idx] === '\n') idx++
-    // 在换行符之后插入，保持一个空行
     const leadingNewlines = content.slice(insertPos, idx)
     newContent =
       content.slice(0, insertPos) +
       leadingNewlines +
-      `import { $t } from '@/locales'\n` +
+      importBlock +
       content.slice(idx)
   }
 

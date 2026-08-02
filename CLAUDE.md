@@ -25,15 +25,16 @@
 ```
 scripts/i18n-scan/
   index.cjs              # CLI 入口，串联全流程
-  scanner.cjs            # 文件扫描（fast-glob），调用 SFC 解析器
-  replacer.cjs           # 源码替换器，将中文替换为 $t() 调用，自动注入 import
+  scanner.cjs            # 文件扫描（fast-glob），按扩展名分流 .vue / .ts / .js
+  replacer.cjs           # 源码替换器，替换中文为 $t()，支持 computed 包裹，自动注入 import
   translator.cjs         # AI 翻译模块（OpenAI 兼容 API），含缺口检测+补齐+重试
   init.cjs               # 初始化 locales 目录，根据 uiLibrary 配置生成 index.ts（Element Plus 模板 / 精简模板）
   setup.cjs              # 交互式配置向导 + 功能菜单（readline 实现）
+  test-full.cjs           # 全量功能测试（45 用例）
   parsers/
     vue-sfc-parser.cjs   # 解析 .vue 单文件组件（@vue/compiler-sfc）
     template-parser.cjs  # 解析 Vue 模板 AST（@vue/compiler-dom）
-    script-parser.cjs    # 解析 JS/TS AST（@babel/parser + traverse）
+    script-parser.cjs    # 解析 JS/TS AST（@babel/parser + traverse），支持正向属性匹配
   generators/
     key-generator.cjs    # 在 locale 反向映射中查找中文对应的 key
     locale-manager.cjs   # 读写 locale JSON 文件，构建反向映射 {中文: module.key}
@@ -59,14 +60,23 @@ scripts/i18n-scan/
 ### 扫描流程
 1. 加载 `i18n.config.js` 配置
 2. 加载现有 locale 文件，构建反向映射 `{ "中文": "module.key" }`
-3. fast-glob 匹配文件 → 逐文件 SFC 解析 → template AST + script AST 提取中文
-4. 分类输出：**已匹配**（locale 中有 key）、**未匹配**（无 key）、**特殊**（模板字符串插值/字符串拼接，需人工处理）
+3. fast-glob 匹配文件 → 按文件扩展名分流：
+   - `.vue` → SFC 解析（template AST + script AST）
+   - `.ts` / `.js` → 直接 script AST 解析（无 template 部分）
+4. script 解析有两条独立路径：
+   - **VariableDeclarator 正向匹配**：变量名命中 `scriptTargets` 后，按属性白名单或全量递归翻译；自动展开 `ref()`/`reactive()` 包裹；跳过非 Vue 响应式的函数调用初始化（如 `fetchData()`）
+   - **translateMethods 白名单**：方法调用参数中的中文，支持通配符（如 `ElMessage.*`）
+5. 分类输出：**已匹配**（locale 中有 key）、**未匹配**（无 key）、**特殊**（模板字符串插值/字符串拼接，需人工处理）
 
 ### 替换流程
 1. 按文件分组，从后往前按行替换（避免行号偏移）
 2. 根据类型生成对应替换：`label="中文"` → `:label="$t('key')"`、`<span>中文</span>` → `<span>{{ $t('key') }}</span>`、`'中文'` → `$t('key')`
-3. 自动注入 `import { $t } from '@/locales'`（检测是否已有，避免重复）
-4. 未匹配的中文追加到语言包 common 模块
+3. template-literal 类型整体重建：`` `共${n}条` `` → `` `${$t('key1')}${n}${$t('key2')}` ``
+4. 若 `scriptReactive: true`，对 `const` 变量包裹 `computed(() => ...)`
+5. 自动注入 import：
+   - `import { $t } from '@/locales'`（检测是否已有，避免重复）
+   - `import { computed } from 'vue'`（仅 scriptReactive 时，检测是否已有）
+6. 未匹配的中文追加到语言包 common 模块
 
 ### AI 翻译流程
 1. 扫描 Vue 文件提取中文 → 去重
@@ -82,7 +92,10 @@ scripts/i18n-scan/
 脚本行为完全由同级目录的 `i18n.config.js` 驱动，关键配置项：
 
 - `projectPath` — 项目根目录
-- `entry` / `exclude` — 扫描范围（glob 模式）
+- `entry` / `exclude` — 扫描范围（glob 模式），支持 `.vue`、`.ts`、`.js` 文件
+- `scanScript` — 是否扫描 `<script>` 中的中文（总开关），默认 true
+- `scriptTargets` — script 翻译目标变量配置，精确指定 **变量名 → 属性名数组** 的正向映射。如 `{ columns: ['label', 'title'] }` 只翻译 `columns` 变量的 `label` 和 `title` 属性。值为 `[]` 表示翻译该变量内所有中文（递归）。**不在配置中的变量不会被翻译**。
+- `scriptReactive` — 是否对 `const` 声明的翻译目标用 `computed(() => ...)` 包裹，使翻译结果响应式更新。默认 false。`let`/`var` 永不包裹。
 - `uiLibrary` — UI 组件库类型（`"element-plus"` / `"vant"` / `"none"`），决定生成的 `index.ts` 模板和 `translateMethods` 默认值
 - `translateAttributes` — 需要翻译的 HTML 属性白名单（如 label, placeholder, title）
 - `ignoreAttributes` — 永远不翻译的属性黑名单（优先级更高）
@@ -107,9 +120,11 @@ scripts/i18n-scan/
 2. 不在 `translateAttributes` 白名单的属性 → 跳过
 3. 不在 `translateMethods` 白名单的方法调用参数 → 跳过
 4. `exclude` 中的文件 → 跳过
-5. 注释、import 声明、TS 类型注解 → 跳过
-6. 已有 `$t()` 调用 → 跳过
-7. 纯数字/英文/符号字符串 → 跳过
+5. 变量名不在 `scriptTargets` 中的变量声明 → 跳过（正向匹配）
+6. 变量 init 为非 ref/reactive 的 CallExpression 或 AwaitExpression → 跳过（接口数据）
+7. 注释、import 声明、TS 类型注解 → 跳过
+8. 已有 `$t()` 调用 → 跳过
+9. 纯数字/英文/符号字符串 → 跳过
 
 ## 依赖
 
@@ -125,4 +140,5 @@ scripts/i18n-scan/
 - `md/PLAN.md` — 整体实现计划
 - `md/DESIGN-setup.md` — 交互式配置设计方案
 - `md/PLAN-setup.md` — 交互式配置实现计划
+- `docs/superpowers/specs/2026-08-02-script-i18n-refactor-design.md` — Script 标签国际化重构设计（本次实现）
 - `scripts/i18n-scan/README.md` — 脚本 README

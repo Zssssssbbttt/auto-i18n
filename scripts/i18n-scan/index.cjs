@@ -129,7 +129,8 @@ function normalizeConfig(config) {
   return {
     projectPath: config.projectPath || ".",
     scanScript: config.scanScript !== undefined ? config.scanScript : true,
-    scanScriptDeclarations: config.scanScriptDeclarations !== undefined ? config.scanScriptDeclarations : true,
+    scriptTargets: config.scriptTargets || {},
+    scriptReactive: config.scriptReactive !== undefined ? config.scriptReactive : false,
     entry: config.entry || ["src/**/*.vue"],
     exclude: config.exclude || [],
     output: config.output || "src/locales",
@@ -843,7 +844,7 @@ async function runScan(
     const filePath = path.resolve(PROJECT_ROOT, relPath);
     if (!fs.existsSync(filePath)) continue;
 
-    const { changed, newKeys } = replaceInFile(filePath, items, reverseMap);
+    const { changed, newKeys } = replaceInFile(filePath, items, reverseMap, config.scriptReactive);
     if (changed) filesModified++;
     allNewKeys.push(...newKeys);
   }

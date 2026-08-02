@@ -686,12 +686,23 @@ const MAIN_ITEMS = [
     default: true,
   },
   {
-    key: "scanScriptDeclarations",
-    title: "是否替换变量声明赋值中的中文？",
+    key: "scriptTargets",
+    title: "Script 翻译目标变量",
     description:
-      "启用后 const msg = '中文' 这类变量赋值也会替换为 $t()，关闭则只替换白名单方法调用中的中文",
+      "精确指定需要翻译的变量名及其属性。格式：变量名: [属性名, ...]（逗号分隔属性和变量）。\n" +
+      "      例如: columns:label,title  rules:message  options:label,text\n" +
+      "      属性列表为空表示翻译该变量内所有中文。无则留空",
+    type: "input",
+    default: "",
+  },
+  {
+    key: "scriptReactive",
+    title: "是否用 computed 包裹 const 声明",
+    description:
+      "启用后 scriptTargets 中 const 声明的变量会用 computed(() => ...) 包裹，\n" +
+      "      使翻译结果响应式更新。let 变量不包裹",
     type: "confirm",
-    default: true,
+    default: false,
   },
   {
     key: "uiLibrary",
@@ -844,6 +855,70 @@ function getConfigValue(flatConfig, key, defaultValue) {
 }
 
 /**
+ * 解析 scriptTargets 字符串为对象
+ * 输入: "columns:label,title  rules:message  options"
+ * 输出: { columns: ['label', 'title'], rules: ['message'], options: [] }
+ * @param {string} raw - 用户输入的原始字符串
+ * @returns {object}
+ */
+function parseScriptTargets(raw) {
+  if (!raw || !raw.trim()) return {}
+  const result = {}
+  // 用空白字符分割变量组
+  const parts = raw.trim().split(/\s+/)
+  for (const part of parts) {
+    const colonIdx = part.indexOf(':')
+    if (colonIdx >= 0) {
+      const varName = part.slice(0, colonIdx).trim()
+      const propsStr = part.slice(colonIdx + 1).trim()
+      result[varName] = propsStr ? propsStr.split(',').map((s) => s.trim()).filter(Boolean) : []
+    } else {
+      // 无冒号 = 全量翻译
+      result[part.trim()] = []
+    }
+  }
+  return result
+}
+
+/**
+ * 将 scriptTargets 对象转为交互模式输入的字符串
+ * 输入: { columns: ['label', 'title'], rules: [] }
+ * 输出: "columns:label,title  rules"
+ * @param {object} targets
+ * @returns {string}
+ */
+function objectScriptTargetsToString(targets) {
+  if (!targets || Object.keys(targets).length === 0) return ''
+  const parts = []
+  for (const [varName, props] of Object.entries(targets)) {
+    if (Array.isArray(props) && props.length > 0) {
+      parts.push(`${varName}:${props.join(',')}`)
+    } else {
+      parts.push(varName)
+    }
+  }
+  return parts.join('  ')
+}
+
+/**
+ * 格式化 scriptTargets 对象为字符串（用于配置输出）
+ * @param {object} targets
+ * @returns {string}
+ */
+function formatScriptTargets(targets) {
+  if (!targets || Object.keys(targets).length === 0) return '{}'
+  const parts = []
+  for (const [varName, props] of Object.entries(targets)) {
+    if (props.length === 0) {
+      parts.push(`${varName}: []`)
+    } else {
+      parts.push(`${varName}: [${props.map((p) => `'${p}'`).join(', ')}]`)
+    }
+  }
+  return `{\n    ${parts.join(',\n    ')}\n  }`
+}
+
+/**
  * 将扁平配置重组为嵌套对象
  */
 function unflattenConfig(flat) {
@@ -912,10 +987,11 @@ function writeConfig(flat, configPath) {
   lines.push("  // 是否扫描 <script> 中的中文");
   lines.push(`  scanScript: ${nested.scanScript !== false},`);
   lines.push("");
-  lines.push("  // 是否替换变量声明赋值中的中文");
-  lines.push(
-    `  scanScriptDeclarations: ${nested.scanScriptDeclarations !== false},`,
-  );
+  lines.push("  // script 翻译目标变量（变量名 → 属性名数组，[] = 全量翻译）");
+  lines.push(`  scriptTargets: ${formatScriptTargets(nested.scriptTargets)},`);
+  lines.push("");
+  lines.push("  // 是否用 computed 包裹 const 声明的翻译目标");
+  lines.push(`  scriptReactive: ${nested.scriptReactive === true},`);
   lines.push("");
   lines.push("  // UI 组件库（element-plus / vant / none）");
   lines.push(
@@ -1042,19 +1118,35 @@ async function runSetup(existingConfig, configPath) {
     for (const item of MAIN_ITEMS) {
       let defaultValue = getConfigValue(existingConfig, item.key, item.default);
 
-      // scanScript 为否时，跳过 scanScriptDeclarations 问题
+      // 如果已有配置中 scriptTargets 是对象，转为字符串显示
       if (
-        item.key === "scanScriptDeclarations" &&
+        item.key === "scriptTargets" &&
+        typeof defaultValue === "object" &&
+        defaultValue !== null &&
+        !Array.isArray(defaultValue)
+      ) {
+        defaultValue = objectScriptTargetsToString(defaultValue)
+      }
+
+      // scanScript 为否时，跳过 scriptTargets 和 scriptReactive 问题
+      if (
+        (item.key === "scriptTargets" || item.key === "scriptReactive") &&
         newConfig.scanScript === false
       ) {
-        newConfig[item.key] = false;
+        newConfig[item.key] = item.key === "scriptTargets" ? {} : false;
         continue;
       }
 
       console.log(`${bold(item.title)}`);
 
       const value = await askItem(prompt, item, defaultValue, existingConfig);
-      newConfig[item.key] = value;
+
+      // 解析 scriptTargets 输入（字符串 → 对象）
+      if (item.key === "scriptTargets" && value) {
+        newConfig[item.key] = parseScriptTargets(value);
+      } else {
+        newConfig[item.key] = value;
+      }
       console.log(`  → ${green(formatValue(value, item.type))}`);
       console.log("");
     }
@@ -1212,8 +1304,14 @@ function printSummary(config) {
     ...(config.scanScript !== false
       ? [
           [
-            "替换变量声明",
-            config.scanScriptDeclarations !== false ? "是" : "否",
+            "翻译目标变量",
+            config.scriptTargets && Object.keys(config.scriptTargets).length > 0
+              ? Object.keys(config.scriptTargets).join(", ")
+              : "(未配置)",
+          ],
+          [
+            "computed 包裹",
+            config.scriptReactive === true ? "是" : "否",
           ],
         ]
       : []),

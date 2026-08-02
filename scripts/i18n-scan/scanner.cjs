@@ -7,6 +7,7 @@ const fg = require('fast-glob')
 const path = require('path')
 const fs = require('fs')
 const { parseVueFile } = require('./parsers/vue-sfc-parser.cjs')
+const { parseScript } = require('./parsers/script-parser.cjs')
 
 /**
  * 扫描项目文件，提取所有中文文本
@@ -58,16 +59,35 @@ async function scanFiles(config, projectRoot) {
       continue
     }
 
-    // 解析文件
-    const { results, errors } = parseVueFile(filePath, source, config)
-
-    // 收集结果
-    allResults.push(...results)
-
-    // 收集错误
-    errors.forEach((msg) => {
-      allErrors.push({ file: filePath, message: msg })
-    })
+    // 按文件扩展名分流：.vue → SFC 解析（含 template），.ts/.js → 纯 script 解析
+    const ext = path.extname(filePath)
+    if (ext === '.vue') {
+      const { results, errors } = parseVueFile(filePath, source, config)
+      allResults.push(...results)
+      errors.forEach((msg) => {
+        allErrors.push({ file: filePath, message: msg })
+      })
+    } else if (ext === '.ts' || ext === '.js') {
+      try {
+        const scriptResults = parseScript(
+          source,
+          config.translateMethods || [],
+          0,
+          config.scriptTargets || {}
+        )
+        scriptResults.forEach((r) => {
+          r.file = filePath
+          r.section = 'script'
+        })
+        allResults.push(...scriptResults)
+      } catch (err) {
+        allErrors.push({
+          file: filePath,
+          message: `Script 解析失败: ${err.message}`,
+        })
+      }
+    }
+    // 其他文件类型忽略
   }
 
   return { results: allResults, errors: allErrors, filesScanned }
