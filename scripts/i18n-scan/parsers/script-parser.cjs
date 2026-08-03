@@ -30,7 +30,7 @@ function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}
   try {
     ast = parser.parse(code, {
       sourceType: 'module',
-      plugins: ['typescript', 'jsx'],
+      plugins: ['decorators-legacy', 'typescript', 'jsx'],
       errorRecovery: true,
     })
   } catch (err) {
@@ -57,11 +57,15 @@ function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}
       if (shouldSkipByInit(init)) return
 
       const isConst = path.parent.kind === 'const'
+      const isComputed =
+        init.type === 'CallExpression' &&
+        getFullMethodName(init.callee) === 'computed'
 
       // 构建变量元数据（供 replacer 做 computed 包裹）
       const meta = {
         varName,
         isConst,
+        isComputed,
         initStartLine: init.loc ? init.loc.start.line + scriptStartLine : 0,
         initStartCol: init.loc ? init.loc.start.column : 0,
         initEndLine: init.loc ? init.loc.end.line + scriptStartLine : 0,
@@ -224,22 +228,59 @@ function shouldSkipByInit(init) {
 }
 
 /**
- * 判断 CallExpression 是否为 ref() 或 reactive() 调用
+ * 判断 CallExpression 是否为 Vue 响应式 API 调用（ref / reactive / computed）
  */
 function isVueReactive(init) {
   if (init.type !== 'CallExpression') return false
   const name = getFullMethodName(init.callee)
-  return name === 'ref' || name === 'reactive'
+  return name === 'ref' || name === 'reactive' || name === 'computed'
 }
 
 /**
- * 展开 Vue 响应式包裹（ref/reactive），返回内部值
- * ref({ label: '中文' }) → { label: '中文' }，ref('中文') → '中文'
+ * 展开 Vue 响应式包裹（ref/reactive/computed），返回内部值
+ * ref({ label: '中文' }) → { label: '中文' }
+ * computed(() => '中文') → '中文'
+ * computed(() => { return expr }) → expr
  */
 function unwrapVueReactive(node) {
   if (node.type === 'CallExpression' && isVueReactive(node)) {
     const args = node.arguments || []
-    if (args.length > 0) return args[0]
+    if (args.length > 0) {
+      const arg = args[0]
+      // computed 的参数是 getter 函数，需要展开函数体
+      if (getFullMethodName(node.callee) === 'computed') {
+        return unwrapGetterFunction(arg)
+      }
+      return arg
+    }
+  }
+  return node
+}
+
+/**
+ * 展开 computed 的 getter 函数，提取返回值表达式
+ * () => expr          → expr
+ * () => { return expr } → expr
+ * function() { return expr } → expr
+ */
+function unwrapGetterFunction(node) {
+  if (node.type === 'ArrowFunctionExpression') {
+    if (node.body.type === 'BlockStatement') {
+      // 函数体是 { return expr }，找 return 语句
+      const returnStmt = node.body.body.find((s) => s.type === 'ReturnStatement')
+      if (returnStmt && returnStmt.argument) {
+        return returnStmt.argument
+      }
+    } else {
+      // 函数体是表达式 () => expr
+      return node.body
+    }
+  } else if (node.type === 'FunctionExpression') {
+    // function() { return expr }
+    const returnStmt = node.body.body.find((s) => s.type === 'ReturnStatement')
+    if (returnStmt && returnStmt.argument) {
+      return returnStmt.argument
+    }
   }
   return node
 }

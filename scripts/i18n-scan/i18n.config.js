@@ -3,10 +3,10 @@
 // 预览: node scripts/i18n-scan/index.cjs --dry-run
 export default {
   // 项目根目录路径（绝对路径或相对于本配置文件的路径）
-  projectPath: "./program/vue3-fundTransfer",
+  projectPath: "../../program/vue3-fundTransfer",
 
   // 扫描范围
-  entry: ["src/**/*.vue","src/type/*.ts"],
+  entry: ["src/**/*.vue", "src/types/**/*.ts"],
   exclude: [],
 
   // 是否扫描 <script> 中的中文
@@ -15,7 +15,7 @@ export default {
   // script 翻译目标变量（变量名 → 属性名数组，[] = 全量翻译）
   scriptTargets: {
     titleInfo: [],
-    TokenswitchApplyRules: ['message']
+    TokenswitchApplyRules: ["message"],
   },
 
   // 是否用 computed 包裹 const 声明的翻译目标
@@ -39,13 +39,72 @@ export default {
   localeStorageKey: "ZXY_locale",
 
   // 需要翻译的 HTML 属性
-  translateAttributes: ["label","placeholder","title","title-info","alt","message","content","desc","text","header","menuTitle","start-placeholder","end-placeholder","error","tip"],
+  translateAttributes: [
+    "label",
+    "placeholder",
+    "title",
+    "title-info",
+    "alt",
+    "message",
+    "content",
+    "desc",
+    "text",
+    "header",
+    "menuTitle",
+    "start-placeholder",
+    "end-placeholder",
+    "error",
+    "tip",
+  ],
 
   // 永远不翻译的属性
-  ignoreAttributes: ["style","class","ref","rules","model","prop","key","slot","name","id","type","format","value-format","range-separator","prefix-icon","suffix-icon","scoped","lang","src","href","target","width","size","mode","disabled","clearable","filterable","remote","reserve-keyword","multiple","show-overflow-tooltip","align","maxlength","rows","trigger","icon"],
+  ignoreAttributes: [
+    "style",
+    "class",
+    "ref",
+    "rules",
+    "model",
+    "prop",
+    "key",
+    "slot",
+    "name",
+    "id",
+    "type",
+    "format",
+    "value-format",
+    "range-separator",
+    "prefix-icon",
+    "suffix-icon",
+    "scoped",
+    "lang",
+    "src",
+    "href",
+    "target",
+    "width",
+    "size",
+    "mode",
+    "disabled",
+    "clearable",
+    "filterable",
+    "remote",
+    "reserve-keyword",
+    "multiple",
+    "show-overflow-tooltip",
+    "align",
+    "maxlength",
+    "rows",
+    "trigger",
+    "icon",
+  ],
 
   // 需要翻译的方法调用（白名单，支持通配符如 ElMessage.*）
-  translateMethods: ["ElMessage.*","ElMessageBox.*","ElNotification.*","alert","confirm"],
+  translateMethods: [
+    "ElMessage.*",
+    "ElMessageBox.*",
+    "ElNotification.*",
+    "alert",
+    "confirm",
+  ],
 
   // key 命名风格
   keyStyle: "camelCase",
@@ -70,4 +129,4 @@ export default {
     // 每批最多翻译条数
     batchSize: 200,
   },
-}
+};

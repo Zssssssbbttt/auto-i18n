@@ -187,6 +187,8 @@ function wrapWithComputed(lines, allItems) {
   const varGroups = {}
   for (const item of allItems) {
     if (!item.varName || !item.isConst) continue
+    // 已经是 computed() 包裹的变量不重复包裹
+    if (item.isComputed) continue
     // 同一变量只保留第一个（元数据相同）
     if (!varGroups[item.varName]) {
       varGroups[item.varName] = item
@@ -251,28 +253,6 @@ function injectImports(filePath) {
   // 检查是否已有 import { computed } 或 import { ... computed ... }
   const hasImportComputed = /import\s*\{[^}]*computed[^}]*\}\s*from/.test(content)
 
-  // 找到 <script> 或 <script setup> 标签
-  const scriptMatch = content.match(/<script\b[^>]*>/)
-  if (!scriptMatch) return
-
-  const scriptTag = scriptMatch[0]
-  const scriptStart = scriptMatch.index
-  const afterTagIdx = scriptStart + scriptTag.length
-
-  // 在 script 标签内部查找所有 import 语句
-  const scriptEndMatch = content.indexOf('</script>', afterTagIdx)
-  const scriptBody = content.slice(afterTagIdx, scriptEndMatch)
-
-  // 找最后一个 import 语句的位置
-  const importRegex = /^import\s+.+$/gm
-  let lastImportEnd = -1
-  let match
-  while ((match = importRegex.exec(scriptBody)) !== null) {
-    lastImportEnd = match.index + match[0].length
-  }
-
-  let newContent = content
-
   // 需要注入的 import 语句
   const importsToAdd = []
   if (usesT && !hasImportT) {
@@ -286,27 +266,69 @@ function injectImports(filePath) {
 
   const importBlock = importsToAdd.join('\n') + '\n'
 
-  if (lastImportEnd >= 0) {
-    // 在最后一个 import 之后插入
-    let insertPos = afterTagIdx + lastImportEnd
-    const afterImport = content.indexOf('\n', insertPos)
-    insertPos = afterImport >= 0 ? afterImport + 1 : insertPos
-    newContent =
-      content.slice(0, insertPos) + importBlock + content.slice(insertPos)
-  } else {
-    // 没有 import 语句，插入到 <script> 标签后的第一行
-    let insertPos = afterTagIdx
-    let idx = insertPos
-    while (idx < content.length && content[idx] === '\n') idx++
-    const leadingNewlines = content.slice(insertPos, idx)
-    newContent =
-      content.slice(0, insertPos) +
-      leadingNewlines +
-      importBlock +
-      content.slice(idx)
-  }
+  // 找到 <script> 或 <script setup> 标签（.vue 文件）
+  const scriptMatch = content.match(/<script\b[^>]*>/)
 
-  fs.writeFileSync(filePath, newContent, 'utf-8')
+  if (scriptMatch) {
+    // .vue 文件：在 <script> 标签内最后一个 import 之后插入
+    const scriptTag = scriptMatch[0]
+    const scriptStart = scriptMatch.index
+    const afterTagIdx = scriptStart + scriptTag.length
+
+    const scriptEndMatch = content.indexOf('</script>', afterTagIdx)
+    const scriptBody = content.slice(afterTagIdx, scriptEndMatch)
+
+    const importRegex = /^import\s+.+$/gm
+    let lastImportEnd = -1
+    let match
+    while ((match = importRegex.exec(scriptBody)) !== null) {
+      lastImportEnd = match.index + match[0].length
+    }
+
+    let newContent = content
+
+    if (lastImportEnd >= 0) {
+      let insertPos = afterTagIdx + lastImportEnd
+      const afterImport = content.indexOf('\n', insertPos)
+      insertPos = afterImport >= 0 ? afterImport + 1 : insertPos
+      newContent =
+        content.slice(0, insertPos) + importBlock + content.slice(insertPos)
+    } else {
+      let insertPos = afterTagIdx
+      let idx = insertPos
+      while (idx < content.length && content[idx] === '\n') idx++
+      const leadingNewlines = content.slice(insertPos, idx)
+      newContent =
+        content.slice(0, insertPos) +
+        leadingNewlines +
+        importBlock +
+        content.slice(idx)
+    }
+
+    fs.writeFileSync(filePath, newContent, 'utf-8')
+  } else {
+    // .ts / .js 文件：在最后一个 import 之后插入，没有 import 则在文件顶部插入
+    const importRegex = /^import\s+.+$/gm
+    let lastImportEnd = -1
+    let match
+    while ((match = importRegex.exec(content)) !== null) {
+      lastImportEnd = match.index + match[0].length
+    }
+
+    let newContent = content
+
+    if (lastImportEnd >= 0) {
+      let insertPos = lastImportEnd
+      const afterImport = content.indexOf('\n', insertPos)
+      insertPos = afterImport >= 0 ? afterImport + 1 : insertPos
+      newContent =
+        content.slice(0, insertPos) + importBlock + content.slice(insertPos)
+    } else {
+      newContent = importBlock + '\n' + content
+    }
+
+    fs.writeFileSync(filePath, newContent, 'utf-8')
+  }
 }
 
 /**

@@ -485,6 +485,29 @@ function createPrompt() {
     closeRl();
   }
 
+  /**
+   * 选择或自定义输入 — 预设选项 + 底部"自定义"选项
+   * 选预设直接返回，选"自定义"弹出输入框
+   */
+  async function selectOrInput(title, description, options, defaultValue) {
+    const customOption = { value: "__custom__", label: "自定义（手动输入）" };
+    const allOptions = [...options, customOption];
+
+    const presetIndex = options.findIndex((o) => o.value === defaultValue);
+
+    const selected = await select(
+      title,
+      description,
+      allOptions,
+      presetIndex >= 0 ? presetIndex : allOptions.length - 1,
+    );
+
+    if (selected === "__custom__") {
+      return await input("  请输入模型名称", null, defaultValue || "");
+    }
+    return selected;
+  }
+
   return {
     input,
     pathInput,
@@ -493,6 +516,7 @@ function createPrompt() {
     multiselect,
     editableList,
     confirm,
+    selectOrInput,
     close,
   };
 }
@@ -642,6 +666,14 @@ const KEY_STYLE_OPTIONS = [
   { value: "kebab-case", label: "kebab-case（短横线）" },
 ];
 
+const AI_MODEL_OPTIONS = [
+  { value: "gpt-4o", label: "gpt-4o — OpenAI 最新多模态" },
+  { value: "gpt-4", label: "gpt-4 — OpenAI GPT-4" },
+  { value: "deepseek-v4-pro", label: "deepseek-v4-pro — DeepSeek V4 Pro" },
+  { value: "deepseek-chat", label: "deepseek-chat — DeepSeek Chat" },
+  { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6 — Anthropic Claude" },
+];
+
 // 必答项
 const REQUIRED_ITEMS = [
   {
@@ -689,9 +721,12 @@ const MAIN_ITEMS = [
     key: "scriptTargets",
     title: "Script 翻译目标变量",
     description:
-      "精确指定需要翻译的变量名及其属性。格式：变量名: [属性名, ...]（逗号分隔属性和变量）。\n" +
-      "      例如: columns:label,title  rules:message  options:label,text\n" +
-      "      属性列表为空表示翻译该变量内所有中文。无则留空",
+      "精确指定要翻译的变量名及属性，不在配置中的变量不会被翻译。\n" +
+      "      格式: 变量名:属性1,属性2  多个变量用空格分隔\n" +
+      "      示例: columns:label,title     → 只翻译 columns 的 label 和 title\n" +
+      "            rules:message            → 只翻译 rules 的 message\n" +
+      "            options                  → 属性为空 = 翻译该变量内所有中文\n" +
+      "      无则留空",
     type: "input",
     default: "",
   },
@@ -724,7 +759,8 @@ const MAIN_ITEMS = [
     key: "sharedLocales",
     title: "共享语言包路径",
     description:
-      "外部共享语言包目录路径（相对于项目根目录），逗号分隔。初始化时会 import 并合并到 i18n 实例中，本项目翻译优先级更高。无则留空",
+      "外部共享语言包目录路径（相对于项目根目录），逗号分隔。\n" +
+      "      初始化时会 import 并合并到 i18n 实例中，本项目翻译优先级更高。无则留空",
     type: "input",
     default: "",
   },
@@ -749,9 +785,10 @@ const CONDITIONAL_ITEMS = [
   {
     key: "ai.model",
     title: "AI 模型名称",
-    description: "使用的模型，如 gpt-4、deepseek-v4-pro",
-    type: "input",
-    default: "gpt-4",
+    description: "使用的模型，↑↓ 选择预设或选「自定义」手动输入",
+    type: "selectOrInput",
+    options: AI_MODEL_OPTIONS,
+    default: "gpt-4o",
   },
 ];
 
@@ -821,13 +858,14 @@ async function loadExistingConfig() {
     const mod = await import(configUrl);
     const raw = mod.default || mod;
 
-    // 扁平化嵌套对象
+    // 扁平化嵌套对象（仅 ai 配置）
     const flat = {};
     for (const [key, value] of Object.entries(raw)) {
       if (
         value !== null &&
         typeof value === "object" &&
-        !Array.isArray(value)
+        !Array.isArray(value) &&
+        key === "ai"
       ) {
         for (const [subKey, subValue] of Object.entries(value)) {
           flat[`${key}.${subKey}`] = subValue;
@@ -1058,7 +1096,7 @@ function writeConfig(flat, configPath) {
   lines.push(
     `    baseURL: ${JSON.stringify(ai.baseURL || "https://api.openai.com/v1")},`,
   );
-  lines.push(`    model: ${JSON.stringify(ai.model || "gpt-4")},`);
+  lines.push(`    model: ${JSON.stringify(ai.model || "gpt-4o")},`);
   lines.push("    temperature: 0.3,");
   lines.push("    maxTokens: 200000,");
   lines.push("");
@@ -1261,6 +1299,13 @@ async function askItem(prompt, item, defaultValue, existingConfig) {
       return await prompt.confirm("", item.description, defaultValue !== false);
     case "secret":
       return await prompt.secret("", item.description, String(defaultValue));
+    case "selectOrInput":
+      return await prompt.selectOrInput(
+        "",
+        item.description,
+        item.options,
+        String(defaultValue),
+      );
     case "editableList": {
       const current = getConfigValue(existingConfig, item.key, null);
       return await prompt.editableList(

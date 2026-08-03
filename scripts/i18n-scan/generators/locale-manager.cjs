@@ -62,78 +62,10 @@ function appendNewKeys(
   targetLanguages,
   newChineseTexts
 ) {
+  // 不再自动生成 key 写入语言包。
+  // 未匹配的中文应由 AI 翻译（--translate）或用户手动添加到语言包。
   if (newChineseTexts.length === 0) return []
-
-  const addedKeys = []
-
-  // 处理源语言文件
-  const sourceFile = path.join(outputDir, `${sourceLanguage}.json`)
-  let sourceData = {}
-  if (fs.existsSync(sourceFile)) {
-    try {
-      sourceData = JSON.parse(fs.readFileSync(sourceFile, 'utf-8'))
-    } catch (err) {
-      console.error(`  警告: 无法解析 ${sourceFile}: ${err.message}`)
-      return addedKeys
-    }
-  }
-
-  // 确保 common 模块存在
-  if (!sourceData.common) sourceData.common = {}
-
-  // 去重并追加
-  const uniqueTexts = [...new Set(newChineseTexts)]
-  for (const chineseText of uniqueTexts) {
-    // 生成简单 key：取中文前几个字
-    const key = generateSimpleKey(chineseText)
-    // 检查是否已存在
-    if (sourceData.common[key]) continue
-    sourceData.common[key] = chineseText
-    addedKeys.push({ chineseText, key: `common.${key}` })
-  }
-
-  // 写回源语言文件
-  if (addedKeys.length > 0) {
-    fs.writeFileSync(sourceFile, JSON.stringify(sourceData, null, 2), 'utf-8')
-  }
-
-  // 处理目标语言文件
-  for (const lang of targetLanguages) {
-    if (lang === sourceLanguage) continue
-    const targetFile = path.join(outputDir, `${lang}.json`)
-    let targetData = {}
-    if (fs.existsSync(targetFile)) {
-      try {
-        targetData = JSON.parse(fs.readFileSync(targetFile, 'utf-8'))
-      } catch (err) {
-        console.error(`  警告: 无法解析 ${targetFile}: ${err.message}`)
-        continue
-      }
-    }
-
-    if (!targetData.common) targetData.common = {}
-
-    for (const item of addedKeys) {
-      const shortKey = item.key.replace('common.', '')
-      if (!targetData.common[shortKey]) {
-        // 目标语言值为空，等待手动翻译
-        targetData.common[shortKey] = ''
-      }
-    }
-
-    fs.writeFileSync(targetFile, JSON.stringify(targetData, null, 2), 'utf-8')
-  }
-
-  return addedKeys
-}
-
-/**
- * 生成简单 key（取中文前几个字）
- */
-function generateSimpleKey(chineseText) {
-  // 去掉标点，取前 6 个字
-  const cleaned = chineseText.replace(/[，。！？、：；""''（）《》【】\s]/g, '')
-  return cleaned.length <= 6 ? cleaned : cleaned.slice(0, 6)
+  return []
 }
 
 module.exports = { loadLocaleReverseMap, appendNewKeys }

@@ -15,7 +15,6 @@ const { execSync } = require("child_process");
 const { scanFiles } = require("./scanner.cjs");
 const {
   loadLocaleReverseMap,
-  appendNewKeys,
 } = require("./generators/locale-manager.cjs");
 const { lookupKey } = require("./generators/key-generator.cjs");
 const { replaceInFile } = require("./replacer.cjs");
@@ -523,58 +522,90 @@ function printDryRun(
   filesScanned,
   errors,
 ) {
-  // 文件级摘要
+  // 文件级摘要（按 section 分组）
   console.log("");
   const fileNames = Object.keys(fileGroups).sort();
-  for (const fileName of fileNames) {
-    const items = fileGroups[fileName];
-    const matchedCount = items.filter((i) => i.key).length;
-    const unmatchedCount = items.filter((i) => !i.key && !i.reason).length;
-    const specialCount = items.filter((i) => i.reason).length;
-    const parts = [];
-    if (matchedCount > 0) parts.push(`${matchedCount} 条已匹配`);
-    if (unmatchedCount > 0) parts.push(`${unmatchedCount} 条未匹配`);
-    if (specialCount > 0) parts.push(`${specialCount} 条特殊`);
-    console.log(`  ${fileName}: ${parts.join(", ")}`);
+  const sections = ["template", "script"];
+  const sectionNames = { template: "Template", script: "Script" };
+
+  for (const section of sections) {
+    const sectionFiles = {};
+    for (const fileName of fileNames) {
+      const items = fileGroups[fileName];
+      const sectionItems = items.filter(
+        (i) => i.section === section && !i.reason
+      );
+      if (sectionItems.length > 0) {
+        sectionFiles[fileName] = sectionItems;
+      }
+    }
+    if (Object.keys(sectionFiles).length === 0) continue;
+
+    console.log(`  [${sectionNames[section]}]:`);
+    for (const fileName of Object.keys(sectionFiles).sort()) {
+      const items = sectionFiles[fileName];
+      const matchedCount = items.filter((i) => i.key).length;
+      const unmatchedCount = items.filter((i) => !i.key).length;
+      const parts = [];
+      if (matchedCount > 0) parts.push(`${matchedCount} 条已匹配`);
+      if (unmatchedCount > 0) parts.push(`${unmatchedCount} 条未匹配`);
+      console.log(`    ${fileName}: ${parts.join(", ")}`);
+    }
   }
 
   printSeparator("预览模式 - 不会修改任何文件");
 
-  // 逐文件详细输出
-  for (const fileName of fileNames) {
-    const items = fileGroups[fileName];
-    // 只输出有匹配或未匹配的文件（特殊项单独输出）
-    const normalItems = items.filter((i) => !i.reason);
-    if (normalItems.length === 0) continue;
-
-    printFileHeader(fileName);
-
-    for (const item of normalItems) {
-      const { line, chineseText, key, type, attrName, context } = item;
-
-      console.log(`  L ${String(line).padEnd(4)} │ ${chineseText}`);
-
-      if (key) {
-        // 根据类型显示替换形式
-        if (type === "static-attr") {
-          console.log(`       │ →  :${attrName}="$t('${key}')"`);
-        } else if (type === "dynamic-attr") {
-          console.log(`       │ →  $t('${key}')`);
-        } else if (type === "text-content") {
-          console.log(`       │ →  {{ $t('${key}') }}`);
-        } else if (type === "interpolation") {
-          console.log(`       │ →  $t('${key}')`);
-        } else {
-          console.log(`       │ →  $t('${key}')`);
-        }
-      } else {
-        console.log(`       │ →  [未匹配] 需手动处理`);
+  // 逐 section 详细输出
+  for (const section of sections) {
+    // 收集该 section 下所有文件的 normal items
+    const sectionFileNames = [];
+    for (const fileName of fileNames) {
+      const items = fileGroups[fileName];
+      const normalItems = items.filter(
+        (i) => !i.reason && i.section === section
+      );
+      if (normalItems.length > 0) {
+        sectionFileNames.push(fileName);
       }
+    }
+    if (sectionFileNames.length === 0) continue;
 
-      if (context) {
-        const shortCtx =
-          context.length > 70 ? context.slice(0, 70) + "..." : context;
-        console.log(`       │ ${shortCtx}`);
+    printSeparator(`  ${sectionNames[section]}  `);
+
+    for (const fileName of sectionFileNames.sort()) {
+      const items = fileGroups[fileName];
+      const normalItems = items.filter(
+        (i) => !i.reason && i.section === section
+      );
+
+      printFileHeader(fileName);
+
+      for (const item of normalItems) {
+        const { line, chineseText, key, type, attrName, context } = item;
+
+        console.log(`  L ${String(line).padEnd(4)} │ ${chineseText}`);
+
+        if (key) {
+          if (type === "static-attr") {
+            console.log(`       │ →  :${attrName}="$t('${key}')"`);
+          } else if (type === "dynamic-attr") {
+            console.log(`       │ →  $t('${key}')`);
+          } else if (type === "text-content") {
+            console.log(`       │ →  {{ $t('${key}') }}`);
+          } else if (type === "interpolation") {
+            console.log(`       │ →  $t('${key}')`);
+          } else {
+            console.log(`       │ →  $t('${key}')`);
+          }
+        } else {
+          console.log(`       │ →  [未匹配] 需手动处理`);
+        }
+
+        if (context) {
+          const shortCtx =
+            context.length > 70 ? context.slice(0, 70) + "..." : context;
+          console.log(`       │ ${shortCtx}`);
+        }
       }
     }
   }
@@ -644,6 +675,12 @@ function printDryRun(
     }
   }
 
+  // 按 section 统计
+  const templateMatched = matched.filter((i) => i.section === "template").length;
+  const scriptMatched = matched.filter((i) => i.section === "script").length;
+  const templateUnmatched = unmatched.filter((i) => i.section === "template").length;
+  const scriptUnmatched = unmatched.filter((i) => i.section === "script").length;
+
   // 汇总
   console.log("");
   printSeparator("i18n 扫描汇总");
@@ -651,8 +688,8 @@ function printDryRun(
   console.log(
     `  发现字符串:   ${matched.length + unmatched.length + special.length}`,
   );
-  console.log(`  已匹配:       ${matched.length}`);
-  console.log(`  未匹配:       ${unmatched.length}`);
+  console.log(`  已匹配:       ${matched.length}  (template: ${templateMatched}, script: ${scriptMatched})`);
+  console.log(`  未匹配:       ${unmatched.length}  (template: ${templateUnmatched}, script: ${scriptUnmatched})`);
   console.log(`  特殊-未处理:  ${special.length}`);
   console.log(`  错误:         ${errors.length}`);
   printSeparator();
@@ -849,29 +886,24 @@ async function runScan(
     allNewKeys.push(...newKeys);
   }
 
-  // 追加未匹配的中文到语言包
-  const newChineseTexts = unmatched.map((item) => item.chineseText);
-  const addedKeys = appendNewKeys(
-    outputDir,
-    config.sourceLanguage,
-    config.targetLanguages,
-    newChineseTexts,
-  );
+  // 按 section 统计
+  const tm = matched.filter((i) => i.section === "template").length;
+  const sm = matched.filter((i) => i.section === "script").length;
+  const tu = unmatched.filter((i) => i.section === "template").length;
+  const su = unmatched.filter((i) => i.section === "script").length;
 
   // 输出结果
   console.log("");
   printSeparator("替换完成");
   console.log(`  修改文件:     ${filesModified}`);
-  console.log(`  已匹配替换:   ${matched.length}`);
-  console.log(`  未匹配跳过:   ${unmatched.length}`);
+  console.log(`  已匹配替换:   ${matched.length}  (template: ${tm}, script: ${sm})`);
+  console.log(`  未匹配跳过:   ${unmatched.length}  (template: ${tu}, script: ${su})`);
   console.log(`  特殊跳过:     ${special.length}`);
 
-  if (addedKeys.length > 0) {
+  if (unmatched.length > 0) {
     console.log("");
-    console.log("  ⚠ 以下中文未匹配，已追加到语言包，请手动翻译:");
-    for (const item of addedKeys) {
-      console.log(`    + [common] ${item.chineseText} → $t('${item.key}')`);
-    }
+    console.log("  ⚠ 以上未匹配的中文未替换，请先运行 --translate 进行 AI 翻译，");
+    console.log("    或手动将翻译添加到语言包后再执行 --scan。");
   }
 
   console.log("");

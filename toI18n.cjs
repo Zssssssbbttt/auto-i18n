@@ -1,6 +1,6 @@
 // toI18n.cjs — Vue 3 i18n 自动扫描脚本
 // 用法: node toI18n.cjs
-// 生成时间: 2026-07-31T07:11:25.759Z
+// 生成时间: 2026-08-03T10:11:10.495Z
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) => function __require() {
@@ -88420,14 +88420,15 @@ var require_script_parser = __commonJS({
     var parser = require_lib();
     var traverse = require_lib8().default;
     var { hasChinese } = require_chinese_detector();
-    function parseScript(code, translateMethods, scriptStartLine, scanDeclarations = true) {
+    function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}) {
       const results = [];
       const sourceLines = code.split("\n");
+      const targetVarNames = Object.keys(scriptTargets);
       let ast;
       try {
         ast = parser.parse(code, {
           sourceType: "module",
-          plugins: ["typescript", "jsx"],
+          plugins: ["decorators-legacy", "typescript", "jsx"],
           errorRecovery: true
         });
       } catch (err) {
@@ -88435,7 +88436,37 @@ var require_script_parser = __commonJS({
       }
       traverse(ast, {
         /**
-         * 处理字符串字面量：'付款暂存失败'、"请选择"
+         * 路径1：VariableDeclarator 正向匹配
+         * 仅处理变量名命中 scriptTargets 的声明，其他变量内的中文不翻译
+         */
+        VariableDeclarator(path2) {
+          if (targetVarNames.length === 0) return;
+          const varName = getVariableName(path2);
+          if (!varName || !targetVarNames.includes(varName)) return;
+          const target = scriptTargets[varName];
+          const init = path2.node.init;
+          if (!init) return;
+          if (shouldSkipByInit(init)) return;
+          const isConst = path2.parent.kind === "const";
+          const isComputed = init.type === "CallExpression" && getFullMethodName(init.callee) === "computed";
+          const meta = {
+            varName,
+            isConst,
+            isComputed,
+            initStartLine: init.loc ? init.loc.start.line + scriptStartLine : 0,
+            initStartCol: init.loc ? init.loc.start.column : 0,
+            initEndLine: init.loc ? init.loc.end.line + scriptStartLine : 0,
+            initEndCol: init.loc ? init.loc.end.column : 0
+          };
+          if (target.length === 0) {
+            collectAllChinese(init, results, sourceLines, scriptStartLine, meta);
+          } else {
+            collectByProperties(init, target, results, sourceLines, scriptStartLine, meta);
+          }
+        },
+        /**
+         * 路径2：StringLiteral 访问器 — 仅处理 translateMethods 白名单
+         * 变量声明中的字符串由 VariableDeclarator 访问器处理
          */
         StringLiteral(path2) {
           const value = path2.node.value;
@@ -88443,12 +88474,10 @@ var require_script_parser = __commonJS({
           if (isInImport(path2)) return;
           if (isMemberAssignmentTarget(path2)) return;
           if (isInStringConcat(path2)) return;
-          if (path2.parent.type === "ObjectProperty" && path2.parent.key === path2.node)
-            return;
+          if (path2.parent.type === "ObjectProperty" && path2.parent.key === path2.node) return;
           if (path2.parent.type === "TSLiteralType") return;
-          const inDeclarator = scanDeclarations && isInVariableDeclarator(path2);
-          const inWhitelist = isInCallExpression(path2) && isTranslatableMethodArg(path2, translateMethods);
-          if (!inDeclarator && !inWhitelist) return;
+          if (isInVariableDeclarator(path2)) return;
+          if (!isInCallExpression(path2) || !isTranslatableMethodArg(path2, translateMethods)) return;
           const line = path2.node.loc ? path2.node.loc.start.line + scriptStartLine : scriptStartLine;
           results.push({
             line,
@@ -88458,10 +88487,10 @@ var require_script_parser = __commonJS({
           });
         },
         /**
-         * 处理模板字符串：`完成时间：${date}`
-         * 含变量插值的归类为「特殊-未处理」
+         * 路径2：模板字符串 — 变量声明由 VariableDeclarator 处理，此处只处理 translateMethods
          */
         TemplateLiteral(path2) {
+          if (isInVariableDeclarator(path2)) return;
           const quasis = path2.node.quasis || [];
           const hasInterpolation = path2.node.expressions && path2.node.expressions.length > 0;
           quasis.forEach((quasi) => {
@@ -88469,63 +88498,16 @@ var require_script_parser = __commonJS({
             if (!hasChinese(text)) return;
             const line = path2.node.loc ? path2.node.loc.start.line + scriptStartLine : scriptStartLine;
             if (hasInterpolation) {
-              if (path2.parent.type === "VariableDeclarator" && path2.parent.init === path2.node) {
-                if (!scanDeclarations) return;
-                const startLine = path2.node.loc.start.line;
-                const endLine = path2.node.loc.end.line;
-                if (startLine !== endLine) {
-                  results.push({
-                    line,
-                    chineseText: text.trim(),
-                    type: "special-template-literal",
-                    reason: "\u591A\u884C\u6A21\u677F\u5B57\u7B26\u4E32\u542B\u53D8\u91CF\u63D2\u503C",
-                    context: getContext(path2, sourceLines, scriptStartLine)
-                  });
-                  return;
-                }
-                const allQuasis = quasis.map(
-                  (q) => q.value.raw || q.value.cooked || ""
-                );
-                const allExpressions = (path2.node.expressions || []).map(
-                  (expr) => {
-                    if (expr.loc) {
-                      const exprLineIdx = expr.loc.start.line - 1;
-                      const exprLine = sourceLines[exprLineIdx];
-                      if (exprLine) {
-                        return exprLine.slice(
-                          expr.loc.start.column,
-                          expr.loc.end.column
-                        );
-                      }
-                    }
-                    return "";
-                  }
-                );
-                results.push({
-                  line,
-                  chineseText: text.trim(),
-                  type: "template-literal",
-                  quasiIndex: quasis.indexOf(quasi),
-                  templateStartCol: path2.node.loc.start.column,
-                  templateEndCol: path2.node.loc.end.column,
-                  quasis: allQuasis,
-                  expressions: allExpressions,
-                  context: getContext(path2, sourceLines, scriptStartLine)
-                });
-              } else {
-                results.push({
-                  line,
-                  chineseText: text.trim(),
-                  type: "special-template-literal",
-                  reason: "\u6A21\u677F\u5B57\u7B26\u4E32\u542B\u53D8\u91CF\u63D2\u503C",
-                  context: getContext(path2, sourceLines, scriptStartLine)
-                });
-              }
+              results.push({
+                line,
+                chineseText: text.trim(),
+                type: "special-template-literal",
+                reason: "\u6A21\u677F\u5B57\u7B26\u4E32\u542B\u53D8\u91CF\u63D2\u503C",
+                context: getContext(path2, sourceLines, scriptStartLine)
+              });
             } else {
               if (isMemberAssignmentTarget(path2)) return;
-              const inDecl = scanDeclarations && isInVariableDeclarator(path2);
-              const inWL = isInCallExpression(path2) && isTranslatableMethodArg(path2, translateMethods);
-              if (!inDecl && !inWL) return;
+              if (!isInCallExpression(path2) || !isTranslatableMethodArg(path2, translateMethods)) return;
               results.push({
                 line,
                 chineseText: text.trim(),
@@ -88536,11 +88518,11 @@ var require_script_parser = __commonJS({
           });
         },
         /**
-         * 处理二元表达式中的字符串拼接：'完成时间：' + variable
-         * 归类为「特殊-未处理」
+         * 路径2：二元表达式拼接 — 变量声明由 VariableDeclarator 处理
          */
         BinaryExpression(path2) {
           if (path2.node.operator !== "+") return;
+          if (isInVariableDeclarator(path2)) return;
           const left = path2.node.left;
           const right = path2.node.right;
           const hasStringOperand = left.type === "StringLiteral" || right.type === "StringLiteral";
@@ -88555,27 +88537,282 @@ var require_script_parser = __commonJS({
           if (chineseParts.length === 0) return;
           const line = path2.node.loc ? path2.node.loc.start.line + scriptStartLine : scriptStartLine;
           chineseParts.forEach((chineseText) => {
-            if (isInVariableDeclarator(path2)) {
-              if (!scanDeclarations) return;
-              results.push({
-                line,
-                chineseText,
-                type: "script-string",
-                context: getContext(path2, sourceLines, scriptStartLine)
-              });
-            } else {
-              results.push({
-                line,
-                chineseText,
-                type: "special-string-concat",
-                reason: "\u5B57\u7B26\u4E32 + \u62FC\u63A5\u542B\u53D8\u91CF",
-                context: getContext(path2, sourceLines, scriptStartLine)
-              });
-            }
+            results.push({
+              line,
+              chineseText,
+              type: "special-string-concat",
+              reason: "\u5B57\u7B26\u4E32 + \u62FC\u63A5\u542B\u53D8\u91CF",
+              context: getContext(path2, sourceLines, scriptStartLine)
+            });
           });
         }
       });
       return results;
+    }
+    function getVariableName(path2) {
+      const id = path2.node.id;
+      if (id.type === "Identifier") return id.name;
+      return null;
+    }
+    function shouldSkipByInit(init) {
+      if (!init) return false;
+      if (isVueReactive(init)) return false;
+      return init.type === "CallExpression" || init.type === "AwaitExpression";
+    }
+    function isVueReactive(init) {
+      if (init.type !== "CallExpression") return false;
+      const name = getFullMethodName(init.callee);
+      return name === "ref" || name === "reactive" || name === "computed";
+    }
+    function unwrapVueReactive(node) {
+      if (node.type === "CallExpression" && isVueReactive(node)) {
+        const args = node.arguments || [];
+        if (args.length > 0) {
+          const arg = args[0];
+          if (getFullMethodName(node.callee) === "computed") {
+            return unwrapGetterFunction(arg);
+          }
+          return arg;
+        }
+      }
+      return node;
+    }
+    function unwrapGetterFunction(node) {
+      if (node.type === "ArrowFunctionExpression") {
+        if (node.body.type === "BlockStatement") {
+          const returnStmt = node.body.body.find((s) => s.type === "ReturnStatement");
+          if (returnStmt && returnStmt.argument) {
+            return returnStmt.argument;
+          }
+        } else {
+          return node.body;
+        }
+      } else if (node.type === "FunctionExpression") {
+        const returnStmt = node.body.body.find((s) => s.type === "ReturnStatement");
+        if (returnStmt && returnStmt.argument) {
+          return returnStmt.argument;
+        }
+      }
+      return node;
+    }
+    function collectByProperties(node, targetProps, results, sourceLines, scriptStartLine, meta) {
+      if (!node) return;
+      node = unwrapVueReactive(node);
+      if (node.type === "ObjectExpression") {
+        for (const prop of node.properties) {
+          if (!prop) continue;
+          if (prop.type === "SpreadElement") continue;
+          const keyName = getObjectKeyName(prop);
+          if (!keyName) continue;
+          if (targetProps.includes(keyName)) {
+            extractChineseFromExpression(prop.value, results, sourceLines, scriptStartLine, meta);
+          }
+          if (prop.value && (prop.value.type === "ObjectExpression" || prop.value.type === "ArrayExpression")) {
+            collectByProperties(prop.value, targetProps, results, sourceLines, scriptStartLine, meta);
+          }
+        }
+      } else if (node.type === "ArrayExpression") {
+        for (const elem of node.elements) {
+          if (!elem) continue;
+          collectByProperties(elem, targetProps, results, sourceLines, scriptStartLine, meta);
+        }
+      }
+    }
+    function collectAllChinese(node, results, sourceLines, scriptStartLine, meta) {
+      if (!node) return;
+      node = unwrapVueReactive(node);
+      if (node.type === "StringLiteral") {
+        if (hasChinese(node.value)) {
+          const line = node.loc ? node.loc.start.line + scriptStartLine : scriptStartLine;
+          results.push({
+            line,
+            chineseText: node.value,
+            type: "script-string",
+            context: getContextByNode(node, sourceLines),
+            ...meta
+          });
+        }
+      } else if (node.type === "TemplateLiteral") {
+        const quasis = node.quasis || [];
+        const hasInterpolation = node.expressions && node.expressions.length > 0;
+        quasis.forEach((quasi, idx) => {
+          const text = quasi.value.raw || quasi.value.cooked || "";
+          if (!hasChinese(text)) return;
+          const line = node.loc ? node.loc.start.line + scriptStartLine : scriptStartLine;
+          if (hasInterpolation) {
+            const startLine = node.loc.start.line;
+            const endLine = node.loc.end.line;
+            if (startLine !== endLine) {
+              results.push({
+                line,
+                chineseText: text.trim(),
+                type: "special-template-literal",
+                reason: "\u591A\u884C\u6A21\u677F\u5B57\u7B26\u4E32\u542B\u53D8\u91CF\u63D2\u503C",
+                context: getContextByNode(node, sourceLines),
+                ...meta
+              });
+              return;
+            }
+            const allQuasis = quasis.map((q) => q.value.raw || q.value.cooked || "");
+            const allExpressions = (node.expressions || []).map((expr) => {
+              if (expr.loc) {
+                const exprLineIdx = expr.loc.start.line - 1;
+                const exprLine = sourceLines[exprLineIdx];
+                if (exprLine) {
+                  return exprLine.slice(expr.loc.start.column, expr.loc.end.column);
+                }
+              }
+              return "";
+            });
+            results.push({
+              line,
+              chineseText: text.trim(),
+              type: "template-literal",
+              quasiIndex: idx,
+              templateStartCol: node.loc.start.column,
+              templateEndCol: node.loc.end.column,
+              quasis: allQuasis,
+              expressions: allExpressions,
+              context: getContextByNode(node, sourceLines),
+              ...meta
+            });
+          } else {
+            results.push({
+              line,
+              chineseText: text.trim(),
+              type: "script-string",
+              context: getContextByNode(node, sourceLines),
+              ...meta
+            });
+          }
+        });
+      } else if (node.type === "BinaryExpression" && node.operator === "+") {
+        extractChineseFromBinaryExpression(node, results, sourceLines, scriptStartLine, meta);
+      } else if (node.type === "ConditionalExpression") {
+        collectAllChinese(node.consequent, results, sourceLines, scriptStartLine, meta);
+        collectAllChinese(node.alternate, results, sourceLines, scriptStartLine, meta);
+      } else if (node.type === "ObjectExpression") {
+        for (const prop of node.properties) {
+          if (!prop) continue;
+          if (prop.type === "SpreadElement") continue;
+          if (prop.value) {
+            collectAllChinese(prop.value, results, sourceLines, scriptStartLine, meta);
+          }
+        }
+      } else if (node.type === "ArrayExpression") {
+        for (const elem of node.elements) {
+          if (elem) collectAllChinese(elem, results, sourceLines, scriptStartLine, meta);
+        }
+      }
+    }
+    function extractChineseFromExpression(expr, results, sourceLines, scriptStartLine, meta) {
+      if (!expr) return;
+      expr = unwrapVueReactive(expr);
+      if (expr.type === "StringLiteral") {
+        if (hasChinese(expr.value)) {
+          const line = expr.loc ? expr.loc.start.line + scriptStartLine : scriptStartLine;
+          results.push({
+            line,
+            chineseText: expr.value,
+            type: "script-string",
+            context: getContextByNode(expr, sourceLines),
+            ...meta
+          });
+        }
+      } else if (expr.type === "TemplateLiteral") {
+        const quasis = expr.quasis || [];
+        const hasInterpolation = expr.expressions && expr.expressions.length > 0;
+        quasis.forEach((quasi, idx) => {
+          const text = quasi.value.raw || quasi.value.cooked || "";
+          if (!hasChinese(text)) return;
+          const line = expr.loc ? expr.loc.start.line + scriptStartLine : scriptStartLine;
+          if (hasInterpolation) {
+            const startLine = expr.loc.start.line;
+            const endLine = expr.loc.end.line;
+            if (startLine !== endLine) {
+              results.push({
+                line,
+                chineseText: text.trim(),
+                type: "special-template-literal",
+                reason: "\u591A\u884C\u6A21\u677F\u5B57\u7B26\u4E32\u542B\u53D8\u91CF\u63D2\u503C",
+                context: getContextByNode(expr, sourceLines),
+                ...meta
+              });
+              return;
+            }
+            const allQuasis = quasis.map((q) => q.value.raw || q.value.cooked || "");
+            const allExpressions = (expr.expressions || []).map((e) => {
+              if (e.loc) {
+                const exprLineIdx = e.loc.start.line - 1;
+                const exprLine = sourceLines[exprLineIdx];
+                if (exprLine) {
+                  return exprLine.slice(e.loc.start.column, e.loc.end.column);
+                }
+              }
+              return "";
+            });
+            results.push({
+              line,
+              chineseText: text.trim(),
+              type: "template-literal",
+              quasiIndex: idx,
+              templateStartCol: expr.loc.start.column,
+              templateEndCol: expr.loc.end.column,
+              quasis: allQuasis,
+              expressions: allExpressions,
+              context: getContextByNode(expr, sourceLines),
+              ...meta
+            });
+          } else {
+            results.push({
+              line,
+              chineseText: text.trim(),
+              type: "script-string",
+              context: getContextByNode(expr, sourceLines),
+              ...meta
+            });
+          }
+        });
+      } else if (expr.type === "BinaryExpression" && expr.operator === "+") {
+        extractChineseFromBinaryExpression(expr, results, sourceLines, scriptStartLine, meta);
+      } else if (expr.type === "ConditionalExpression") {
+        extractChineseFromExpression(expr.consequent, results, sourceLines, scriptStartLine, meta);
+        extractChineseFromExpression(expr.alternate, results, sourceLines, scriptStartLine, meta);
+      }
+    }
+    function extractChineseFromBinaryExpression(node, results, sourceLines, scriptStartLine, meta) {
+      const parts = collectAllChineseFromBinaryExpression(node);
+      if (parts.length === 0) return;
+      const line = node.loc ? node.loc.start.line + scriptStartLine : scriptStartLine;
+      parts.forEach((chineseText) => {
+        results.push({
+          line,
+          chineseText,
+          type: "script-string",
+          context: getContextByNode(node, sourceLines),
+          ...meta
+        });
+      });
+    }
+    function collectAllChineseFromBinaryExpression(node) {
+      const parts = [];
+      function walk(n) {
+        if (!n) return;
+        if (n.type === "StringLiteral" && hasChinese(n.value)) {
+          parts.push(n.value);
+        } else if (n.type === "BinaryExpression" && n.operator === "+") {
+          walk(n.left);
+          walk(n.right);
+        }
+      }
+      walk(node);
+      return parts;
+    }
+    function getObjectKeyName(prop) {
+      if (!prop.key) return null;
+      if (prop.key.type === "Identifier") return prop.key.name;
+      if (prop.key.type === "StringLiteral") return prop.key.value;
+      return null;
     }
     function isInImport(path2) {
       let current = path2.parentPath;
@@ -88677,6 +88914,20 @@ var require_script_parser = __commonJS({
         return "";
       }
     }
+    function getContextByNode(node, sourceLines) {
+      try {
+        if (node.loc) {
+          const lineIdx = node.loc.start.line - 1;
+          const line = sourceLines[lineIdx];
+          if (line) {
+            return line.trim().length > 80 ? line.trim().slice(0, 80) + "..." : line.trim();
+          }
+        }
+        return "";
+      } catch {
+        return "";
+      }
+    }
     module2.exports = { parseScript };
   }
 });
@@ -88740,7 +88991,7 @@ var require_vue_sfc_parser = __commonJS({
               scriptSource,
               config.translateMethods,
               scriptStartLine,
-              config.scanScriptDeclarations
+              config.scriptTargets
             );
             scriptResults.forEach((r) => {
               r.file = filePath;
@@ -88765,6 +89016,7 @@ var require_scanner = __commonJS({
     var path2 = require("path");
     var fs2 = require("fs");
     var { parseVueFile } = require_vue_sfc_parser();
+    var { parseScript } = require_script_parser();
     async function scanFiles2(config, projectRoot) {
       const allResults = [];
       const allErrors = [];
@@ -88798,11 +89050,33 @@ var require_scanner = __commonJS({
           });
           continue;
         }
-        const { results, errors } = parseVueFile(filePath, source, config);
-        allResults.push(...results);
-        errors.forEach((msg) => {
-          allErrors.push({ file: filePath, message: msg });
-        });
+        const ext = path2.extname(filePath);
+        if (ext === ".vue") {
+          const { results, errors } = parseVueFile(filePath, source, config);
+          allResults.push(...results);
+          errors.forEach((msg) => {
+            allErrors.push({ file: filePath, message: msg });
+          });
+        } else if (ext === ".ts" || ext === ".js") {
+          try {
+            const scriptResults = parseScript(
+              source,
+              config.translateMethods || [],
+              0,
+              config.scriptTargets || {}
+            );
+            scriptResults.forEach((r) => {
+              r.file = filePath;
+              r.section = "script";
+            });
+            allResults.push(...scriptResults);
+          } catch (err) {
+            allErrors.push({
+              file: filePath,
+              message: `Script \u89E3\u6790\u5931\u8D25: ${err.message}`
+            });
+          }
+        }
       }
       return { results: allResults, errors: allErrors, filesScanned };
     }
@@ -88844,58 +89118,11 @@ var require_locale_manager = __commonJS({
         }
       }
     }
-    function appendNewKeys2(outputDir, sourceLanguage, targetLanguages, newChineseTexts) {
+    function appendNewKeys(outputDir, sourceLanguage, targetLanguages, newChineseTexts) {
       if (newChineseTexts.length === 0) return [];
-      const addedKeys = [];
-      const sourceFile = path2.join(outputDir, `${sourceLanguage}.json`);
-      let sourceData = {};
-      if (fs2.existsSync(sourceFile)) {
-        try {
-          sourceData = JSON.parse(fs2.readFileSync(sourceFile, "utf-8"));
-        } catch (err) {
-          console.error(`  \u8B66\u544A: \u65E0\u6CD5\u89E3\u6790 ${sourceFile}: ${err.message}`);
-          return addedKeys;
-        }
-      }
-      if (!sourceData.common) sourceData.common = {};
-      const uniqueTexts = [...new Set(newChineseTexts)];
-      for (const chineseText of uniqueTexts) {
-        const key = generateSimpleKey(chineseText);
-        if (sourceData.common[key]) continue;
-        sourceData.common[key] = chineseText;
-        addedKeys.push({ chineseText, key: `common.${key}` });
-      }
-      if (addedKeys.length > 0) {
-        fs2.writeFileSync(sourceFile, JSON.stringify(sourceData, null, 2), "utf-8");
-      }
-      for (const lang of targetLanguages) {
-        if (lang === sourceLanguage) continue;
-        const targetFile = path2.join(outputDir, `${lang}.json`);
-        let targetData = {};
-        if (fs2.existsSync(targetFile)) {
-          try {
-            targetData = JSON.parse(fs2.readFileSync(targetFile, "utf-8"));
-          } catch (err) {
-            console.error(`  \u8B66\u544A: \u65E0\u6CD5\u89E3\u6790 ${targetFile}: ${err.message}`);
-            continue;
-          }
-        }
-        if (!targetData.common) targetData.common = {};
-        for (const item of addedKeys) {
-          const shortKey = item.key.replace("common.", "");
-          if (!targetData.common[shortKey]) {
-            targetData.common[shortKey] = "";
-          }
-        }
-        fs2.writeFileSync(targetFile, JSON.stringify(targetData, null, 2), "utf-8");
-      }
-      return addedKeys;
+      return [];
     }
-    function generateSimpleKey(chineseText) {
-      const cleaned = chineseText.replace(/[，。！？、：；""''（）《》【】\s]/g, "");
-      return cleaned.length <= 6 ? cleaned : cleaned.slice(0, 6);
-    }
-    module2.exports = { loadLocaleReverseMap: loadLocaleReverseMap2, appendNewKeys: appendNewKeys2 };
+    module2.exports = { loadLocaleReverseMap: loadLocaleReverseMap2, appendNewKeys };
   }
 });
 
@@ -88918,7 +89145,7 @@ var require_key_generator = __commonJS({
 var require_replacer = __commonJS({
   "scripts/i18n-scan/replacer.cjs"(exports2, module2) {
     var fs2 = require("fs");
-    function replaceInFile2(filePath, items, reverseMap) {
+    function replaceInFile2(filePath, items, reverseMap, scriptReactive = false) {
       const lines = fs2.readFileSync(filePath, "utf-8").split("\n");
       const newKeys = [];
       let changed = false;
@@ -89025,46 +89252,111 @@ var require_replacer = __commonJS({
         }
         lines[lineIdx] = line;
       }
+      if (scriptReactive) {
+        wrapWithComputed(lines, items);
+        changed = true;
+      }
       if (changed) {
         fs2.writeFileSync(filePath, lines.join("\n"), "utf-8");
-        injectImportT(filePath);
+        injectImports(filePath);
       }
       return { changed, newKeys };
     }
-    function injectImportT(filePath) {
-      const content = fs2.readFileSync(filePath, "utf-8");
-      if (!/\$t\(/.test(content)) return;
-      if (/import\s*\{[^}]*\$t[^}]*\}\s*from/.test(content)) return;
-      const scriptMatch = content.match(/<script\b[^>]*>/);
-      if (!scriptMatch) return;
-      const scriptTag = scriptMatch[0];
-      const scriptStart = scriptMatch.index;
-      const afterTagIdx = scriptStart + scriptTag.length;
-      const scriptEndMatch = content.indexOf("</script>", afterTagIdx);
-      const scriptBody = content.slice(afterTagIdx, scriptEndMatch);
-      const importRegex = /^import\s+.+$/gm;
-      let lastImportEnd = -1;
-      let match;
-      while ((match = importRegex.exec(scriptBody)) !== null) {
-        lastImportEnd = match.index + match[0].length;
+    function wrapWithComputed(lines, allItems) {
+      const varGroups = {};
+      for (const item of allItems) {
+        if (!item.varName || !item.isConst) continue;
+        if (item.isComputed) continue;
+        if (!varGroups[item.varName]) {
+          varGroups[item.varName] = item;
+        }
       }
-      let insertPos;
-      let newContent;
-      if (lastImportEnd >= 0) {
-        insertPos = afterTagIdx + lastImportEnd;
-        const afterImport = content.indexOf("\n", insertPos);
-        insertPos = afterImport >= 0 ? afterImport + 1 : insertPos;
-        newContent = content.slice(0, insertPos) + `import { $t } from '@/locales'
-` + content.slice(insertPos);
+      const entries = Object.values(varGroups);
+      if (entries.length === 0) return;
+      entries.sort((a, b) => b.initStartLine - a.initStartLine);
+      for (const meta of entries) {
+        wrapSingleInit(lines, meta);
+      }
+    }
+    function wrapSingleInit(lines, meta) {
+      const startIdx = meta.initStartLine - 1;
+      if (startIdx < 0 || startIdx >= lines.length) return;
+      const startLine = lines[startIdx];
+      const eqIdx = startLine.lastIndexOf("=", meta.initStartCol);
+      if (eqIdx < 0) return;
+      const prefix = startLine.slice(0, eqIdx + 1);
+      const after = startLine.slice(eqIdx + 1);
+      if (meta.initStartLine === meta.initEndLine) {
+        lines[startIdx] = prefix + " computed(() =>" + after + ")";
       } else {
-        insertPos = afterTagIdx;
-        let idx = insertPos;
-        while (idx < content.length && content[idx] === "\n") idx++;
-        const leadingNewlines = content.slice(insertPos, idx);
-        newContent = content.slice(0, insertPos) + leadingNewlines + `import { $t } from '@/locales'
-` + content.slice(idx);
+        lines[startIdx] = prefix + " computed(() =>" + after;
+        const endIdx = meta.initEndLine - 1;
+        if (endIdx >= 0 && endIdx < lines.length) {
+          lines[endIdx] = lines[endIdx] + ")";
+        }
       }
-      fs2.writeFileSync(filePath, newContent, "utf-8");
+    }
+    function injectImports(filePath) {
+      const content = fs2.readFileSync(filePath, "utf-8");
+      const usesT = /\$t\(/.test(content);
+      const usesComputed = /computed\(/.test(content);
+      if (!usesT && !usesComputed) return;
+      const hasImportT = /import\s*\{[^}]*\$t[^}]*\}\s*from/.test(content);
+      const hasImportComputed = /import\s*\{[^}]*computed[^}]*\}\s*from/.test(content);
+      const importsToAdd = [];
+      if (usesT && !hasImportT) {
+        importsToAdd.push("import { $t } from '@/locales'");
+      }
+      if (usesComputed && !hasImportComputed) {
+        importsToAdd.push("import { computed } from 'vue'");
+      }
+      if (importsToAdd.length === 0) return;
+      const importBlock = importsToAdd.join("\n") + "\n";
+      const scriptMatch = content.match(/<script\b[^>]*>/);
+      if (scriptMatch) {
+        const scriptTag = scriptMatch[0];
+        const scriptStart = scriptMatch.index;
+        const afterTagIdx = scriptStart + scriptTag.length;
+        const scriptEndMatch = content.indexOf("</script>", afterTagIdx);
+        const scriptBody = content.slice(afterTagIdx, scriptEndMatch);
+        const importRegex = /^import\s+.+$/gm;
+        let lastImportEnd = -1;
+        let match;
+        while ((match = importRegex.exec(scriptBody)) !== null) {
+          lastImportEnd = match.index + match[0].length;
+        }
+        let newContent = content;
+        if (lastImportEnd >= 0) {
+          let insertPos = afterTagIdx + lastImportEnd;
+          const afterImport = content.indexOf("\n", insertPos);
+          insertPos = afterImport >= 0 ? afterImport + 1 : insertPos;
+          newContent = content.slice(0, insertPos) + importBlock + content.slice(insertPos);
+        } else {
+          let insertPos = afterTagIdx;
+          let idx = insertPos;
+          while (idx < content.length && content[idx] === "\n") idx++;
+          const leadingNewlines = content.slice(insertPos, idx);
+          newContent = content.slice(0, insertPos) + leadingNewlines + importBlock + content.slice(idx);
+        }
+        fs2.writeFileSync(filePath, newContent, "utf-8");
+      } else {
+        const importRegex = /^import\s+.+$/gm;
+        let lastImportEnd = -1;
+        let match;
+        while ((match = importRegex.exec(content)) !== null) {
+          lastImportEnd = match.index + match[0].length;
+        }
+        let newContent = content;
+        if (lastImportEnd >= 0) {
+          let insertPos = lastImportEnd;
+          const afterImport = content.indexOf("\n", insertPos);
+          insertPos = afterImport >= 0 ? afterImport + 1 : insertPos;
+          newContent = content.slice(0, insertPos) + importBlock + content.slice(insertPos);
+        } else {
+          newContent = importBlock + "\n" + content;
+        }
+        fs2.writeFileSync(filePath, newContent, "utf-8");
+      }
     }
     function buildReplacement(item, key) {
       switch (item.type) {
@@ -90142,10 +90434,18 @@ export function setupI18n(app: any) {
               0,
               "",
               `// \u5168\u5C40\u6CE8\u518C $t\uFF0C\u6A21\u677F\u4E2D\u53EF\u76F4\u63A5\u4F7F\u7528`,
-              globalTLine
+              globalTLine,
+              "",
+              `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
+              `// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
+              `const compMsgs = getComponentMessages()`,
+              `for (const locale of Object.keys(compMsgs)) {`,
+              `  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
+              `}`,
+              `setI18nInstance(i18n)`
             );
             content = lines.join("\n");
-            console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0\u5168\u5C40 $t \u6CE8\u518C");
+            console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0\u5168\u5C40 $t \u6CE8\u518C\u53CA @vnet/i18n \u6CE8\u518C");
             changed = true;
             inserted = true;
             break;
@@ -90156,6 +90456,36 @@ export function setupI18n(app: any) {
         }
       } else {
         console.log("  \u8DF3\u8FC7: main.ts \u5168\u5C40 $t \u6CE8\u518C\u5DF2\u5B58\u5728");
+        if (!content.includes("setI18nInstance(i18n)")) {
+          const lines = content.split("\n");
+          let inserted = false;
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].trim() === globalTLine) {
+              lines.splice(
+                i + 1,
+                0,
+                "",
+                `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
+                `// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
+                `const compMsgs = getComponentMessages()`,
+                `for (const locale of Object.keys(compMsgs)) {`,
+                `  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
+                `}`,
+                `setI18nInstance(i18n)`
+              );
+              content = lines.join("\n");
+              console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
+              changed = true;
+              inserted = true;
+              break;
+            }
+          }
+          if (!inserted) {
+            console.log("  \u8B66\u544A: \u672A\u627E\u5230\u5168\u5C40 $t \u6CE8\u518C\u884C\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
+          }
+        } else {
+          console.log("  \u8DF3\u8FC7: main.ts @vnet/i18n \u6CE8\u518C\u4EE3\u7801\u5DF2\u5B58\u5728");
+        }
       }
       if (!content.includes(".use(i18n)")) {
         const lines = content.split("\n");
@@ -90188,32 +90518,6 @@ export function setupI18n(app: any) {
         }
       } else {
         console.log("  \u8DF3\u8FC7: main.ts app.use(i18n) \u5DF2\u5B58\u5728");
-      }
-      const vnetSetupCode = `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C
-// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362
-const compMsgs = getComponentMessages()
-for (const locale of Object.keys(compMsgs)) {
-  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])
-}
-setI18nInstance(i18n)`;
-      if (content.includes("setI18nInstance(i18n)")) {
-        console.log("  \u8DF3\u8FC7: main.ts @vnet/i18n \u6CE8\u518C\u4EE3\u7801\u5DF2\u5B58\u5728");
-      } else {
-        const lines = content.split("\n");
-        let inserted = false;
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].trim() === ".use(i18n)" || lines[i].includes(".use(i18n)")) {
-            lines.splice(i + 1, 0, "", vnetSetupCode);
-            content = lines.join("\n");
-            console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
-            changed = true;
-            inserted = true;
-            break;
-          }
-        }
-        if (!inserted) {
-          console.log("  \u8B66\u544A: \u672A\u627E\u5230 .use(i18n)\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
-        }
       }
       if (changed) {
         fs2.writeFileSync(mainFile, content, "utf-8");
@@ -90602,6 +90906,21 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       function close() {
         closeRl();
       }
+      async function selectOrInput(title, description, options, defaultValue) {
+        const customOption = { value: "__custom__", label: "\u81EA\u5B9A\u4E49\uFF08\u624B\u52A8\u8F93\u5165\uFF09" };
+        const allOptions = [...options, customOption];
+        const presetIndex = options.findIndex((o) => o.value === defaultValue);
+        const selected = await select(
+          title,
+          description,
+          allOptions,
+          presetIndex >= 0 ? presetIndex : allOptions.length - 1
+        );
+        if (selected === "__custom__") {
+          return await input("  \u8BF7\u8F93\u5165\u6A21\u578B\u540D\u79F0", null, defaultValue || "");
+        }
+        return selected;
+      }
       return {
         input,
         pathInput,
@@ -90610,6 +90929,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         multiselect,
         editableList,
         confirm: confirm2,
+        selectOrInput,
         close
       };
     }
@@ -90729,6 +91049,13 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       { value: "snake_case", label: "snake_case\uFF08\u86C7\u5F62\uFF09" },
       { value: "kebab-case", label: "kebab-case\uFF08\u77ED\u6A2A\u7EBF\uFF09" }
     ];
+    var AI_MODEL_OPTIONS = [
+      { value: "gpt-4o", label: "gpt-4o \u2014 OpenAI \u6700\u65B0\u591A\u6A21\u6001" },
+      { value: "gpt-4", label: "gpt-4 \u2014 OpenAI GPT-4" },
+      { value: "deepseek-v4-pro", label: "deepseek-v4-pro \u2014 DeepSeek V4 Pro" },
+      { value: "deepseek-chat", label: "deepseek-chat \u2014 DeepSeek Chat" },
+      { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6 \u2014 Anthropic Claude" }
+    ];
     var REQUIRED_ITEMS = [
       {
         key: "projectPath",
@@ -90770,11 +91097,18 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         default: true
       },
       {
-        key: "scanScriptDeclarations",
-        title: "\u662F\u5426\u66FF\u6362\u53D8\u91CF\u58F0\u660E\u8D4B\u503C\u4E2D\u7684\u4E2D\u6587\uFF1F",
-        description: "\u542F\u7528\u540E const msg = '\u4E2D\u6587' \u8FD9\u7C7B\u53D8\u91CF\u8D4B\u503C\u4E5F\u4F1A\u66FF\u6362\u4E3A $t()\uFF0C\u5173\u95ED\u5219\u53EA\u66FF\u6362\u767D\u540D\u5355\u65B9\u6CD5\u8C03\u7528\u4E2D\u7684\u4E2D\u6587",
+        key: "scriptTargets",
+        title: "Script \u7FFB\u8BD1\u76EE\u6807\u53D8\u91CF",
+        description: "\u7CBE\u786E\u6307\u5B9A\u8981\u7FFB\u8BD1\u7684\u53D8\u91CF\u540D\u53CA\u5C5E\u6027\uFF0C\u4E0D\u5728\u914D\u7F6E\u4E2D\u7684\u53D8\u91CF\u4E0D\u4F1A\u88AB\u7FFB\u8BD1\u3002\n      \u683C\u5F0F: \u53D8\u91CF\u540D:\u5C5E\u60271,\u5C5E\u60272  \u591A\u4E2A\u53D8\u91CF\u7528\u7A7A\u683C\u5206\u9694\n      \u793A\u4F8B: columns:label,title     \u2192 \u53EA\u7FFB\u8BD1 columns \u7684 label \u548C title\n            rules:message            \u2192 \u53EA\u7FFB\u8BD1 rules \u7684 message\n            options                  \u2192 \u5C5E\u6027\u4E3A\u7A7A = \u7FFB\u8BD1\u8BE5\u53D8\u91CF\u5185\u6240\u6709\u4E2D\u6587\n      \u65E0\u5219\u7559\u7A7A",
+        type: "input",
+        default: ""
+      },
+      {
+        key: "scriptReactive",
+        title: "\u662F\u5426\u7528 computed \u5305\u88F9 const \u58F0\u660E",
+        description: "\u542F\u7528\u540E scriptTargets \u4E2D const \u58F0\u660E\u7684\u53D8\u91CF\u4F1A\u7528 computed(() => ...) \u5305\u88F9\uFF0C\n      \u4F7F\u7FFB\u8BD1\u7ED3\u679C\u54CD\u5E94\u5F0F\u66F4\u65B0\u3002let \u53D8\u91CF\u4E0D\u5305\u88F9",
         type: "confirm",
-        default: true
+        default: false
       },
       {
         key: "uiLibrary",
@@ -90794,7 +91128,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       {
         key: "sharedLocales",
         title: "\u5171\u4EAB\u8BED\u8A00\u5305\u8DEF\u5F84",
-        description: "\u5916\u90E8\u5171\u4EAB\u8BED\u8A00\u5305\u76EE\u5F55\u8DEF\u5F84\uFF08\u76F8\u5BF9\u4E8E\u9879\u76EE\u6839\u76EE\u5F55\uFF09\uFF0C\u9017\u53F7\u5206\u9694\u3002\u521D\u59CB\u5316\u65F6\u4F1A import \u5E76\u5408\u5E76\u5230 i18n \u5B9E\u4F8B\u4E2D\uFF0C\u672C\u9879\u76EE\u7FFB\u8BD1\u4F18\u5148\u7EA7\u66F4\u9AD8\u3002\u65E0\u5219\u7559\u7A7A",
+        description: "\u5916\u90E8\u5171\u4EAB\u8BED\u8A00\u5305\u76EE\u5F55\u8DEF\u5F84\uFF08\u76F8\u5BF9\u4E8E\u9879\u76EE\u6839\u76EE\u5F55\uFF09\uFF0C\u9017\u53F7\u5206\u9694\u3002\n      \u521D\u59CB\u5316\u65F6\u4F1A import \u5E76\u5408\u5E76\u5230 i18n \u5B9E\u4F8B\u4E2D\uFF0C\u672C\u9879\u76EE\u7FFB\u8BD1\u4F18\u5148\u7EA7\u66F4\u9AD8\u3002\u65E0\u5219\u7559\u7A7A",
         type: "input",
         default: ""
       }
@@ -90817,9 +91151,10 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       {
         key: "ai.model",
         title: "AI \u6A21\u578B\u540D\u79F0",
-        description: "\u4F7F\u7528\u7684\u6A21\u578B\uFF0C\u5982 gpt-4\u3001deepseek-v4-pro",
-        type: "input",
-        default: "gpt-4"
+        description: "\u4F7F\u7528\u7684\u6A21\u578B\uFF0C\u2191\u2193 \u9009\u62E9\u9884\u8BBE\u6216\u9009\u300C\u81EA\u5B9A\u4E49\u300D\u624B\u52A8\u8F93\u5165",
+        type: "selectOrInput",
+        options: AI_MODEL_OPTIONS,
+        default: "gpt-4o"
       }
     ];
     var ADVANCED_ITEMS = [
@@ -90878,7 +91213,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         const raw = mod.default || mod;
         const flat = {};
         for (const [key, value] of Object.entries(raw)) {
-          if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+          if (value !== null && typeof value === "object" && !Array.isArray(value) && key === "ai") {
             for (const [subKey, subValue] of Object.entries(value)) {
               flat[`${key}.${subKey}`] = subValue;
             }
@@ -90897,6 +91232,48 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         return flatConfig[key];
       }
       return defaultValue;
+    }
+    function parseScriptTargets(raw) {
+      if (!raw || !raw.trim()) return {};
+      const result = {};
+      const parts = raw.trim().split(/\s+/);
+      for (const part of parts) {
+        const colonIdx = part.indexOf(":");
+        if (colonIdx >= 0) {
+          const varName = part.slice(0, colonIdx).trim();
+          const propsStr = part.slice(colonIdx + 1).trim();
+          result[varName] = propsStr ? propsStr.split(",").map((s) => s.trim()).filter(Boolean) : [];
+        } else {
+          result[part.trim()] = [];
+        }
+      }
+      return result;
+    }
+    function objectScriptTargetsToString(targets) {
+      if (!targets || Object.keys(targets).length === 0) return "";
+      const parts = [];
+      for (const [varName, props] of Object.entries(targets)) {
+        if (Array.isArray(props) && props.length > 0) {
+          parts.push(`${varName}:${props.join(",")}`);
+        } else {
+          parts.push(varName);
+        }
+      }
+      return parts.join("  ");
+    }
+    function formatScriptTargets(targets) {
+      if (!targets || Object.keys(targets).length === 0) return "{}";
+      const parts = [];
+      for (const [varName, props] of Object.entries(targets)) {
+        if (props.length === 0) {
+          parts.push(`${varName}: []`);
+        } else {
+          parts.push(`${varName}: [${props.map((p) => `'${p}'`).join(", ")}]`);
+        }
+      }
+      return `{
+    ${parts.join(",\n    ")}
+  }`;
     }
     function unflattenConfig(flat) {
       const result = {};
@@ -90950,10 +91327,11 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       lines.push("  // \u662F\u5426\u626B\u63CF <script> \u4E2D\u7684\u4E2D\u6587");
       lines.push(`  scanScript: ${nested.scanScript !== false},`);
       lines.push("");
-      lines.push("  // \u662F\u5426\u66FF\u6362\u53D8\u91CF\u58F0\u660E\u8D4B\u503C\u4E2D\u7684\u4E2D\u6587");
-      lines.push(
-        `  scanScriptDeclarations: ${nested.scanScriptDeclarations !== false},`
-      );
+      lines.push("  // script \u7FFB\u8BD1\u76EE\u6807\u53D8\u91CF\uFF08\u53D8\u91CF\u540D \u2192 \u5C5E\u6027\u540D\u6570\u7EC4\uFF0C[] = \u5168\u91CF\u7FFB\u8BD1\uFF09");
+      lines.push(`  scriptTargets: ${formatScriptTargets(nested.scriptTargets)},`);
+      lines.push("");
+      lines.push("  // \u662F\u5426\u7528 computed \u5305\u88F9 const \u58F0\u660E\u7684\u7FFB\u8BD1\u76EE\u6807");
+      lines.push(`  scriptReactive: ${nested.scriptReactive === true},`);
       lines.push("");
       lines.push("  // UI \u7EC4\u4EF6\u5E93\uFF08element-plus / vant / none\uFF09");
       lines.push(
@@ -91014,7 +91392,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       lines.push(
         `    baseURL: ${JSON.stringify(ai.baseURL || "https://api.openai.com/v1")},`
       );
-      lines.push(`    model: ${JSON.stringify(ai.model || "gpt-4")},`);
+      lines.push(`    model: ${JSON.stringify(ai.model || "gpt-4o")},`);
       lines.push("    temperature: 0.3,");
       lines.push("    maxTokens: 200000,");
       lines.push("");
@@ -91056,13 +91434,20 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         console.log("");
         for (const item of MAIN_ITEMS) {
           let defaultValue = getConfigValue(existingConfig, item.key, item.default);
-          if (item.key === "scanScriptDeclarations" && newConfig.scanScript === false) {
-            newConfig[item.key] = false;
+          if (item.key === "scriptTargets" && typeof defaultValue === "object" && defaultValue !== null && !Array.isArray(defaultValue)) {
+            defaultValue = objectScriptTargetsToString(defaultValue);
+          }
+          if ((item.key === "scriptTargets" || item.key === "scriptReactive") && newConfig.scanScript === false) {
+            newConfig[item.key] = item.key === "scriptTargets" ? {} : false;
             continue;
           }
           console.log(`${bold(item.title)}`);
           const value = await askItem(prompt, item, defaultValue, existingConfig);
-          newConfig[item.key] = value;
+          if (item.key === "scriptTargets" && value) {
+            newConfig[item.key] = parseScriptTargets(value);
+          } else {
+            newConfig[item.key] = value;
+          }
           console.log(`  \u2192 ${green(formatValue(value, item.type))}`);
           console.log("");
         }
@@ -91154,6 +91539,13 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
           return await prompt.confirm("", item.description, defaultValue !== false);
         case "secret":
           return await prompt.secret("", item.description, String(defaultValue));
+        case "selectOrInput":
+          return await prompt.selectOrInput(
+            "",
+            item.description,
+            item.options,
+            String(defaultValue)
+          );
         case "editableList": {
           const current = getConfigValue(existingConfig, item.key, null);
           return await prompt.editableList(
@@ -91188,8 +91580,12 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         ["\u626B\u63CF script", config.scanScript !== false ? "\u662F" : "\u5426"],
         ...config.scanScript !== false ? [
           [
-            "\u66FF\u6362\u53D8\u91CF\u58F0\u660E",
-            config.scanScriptDeclarations !== false ? "\u662F" : "\u5426"
+            "\u7FFB\u8BD1\u76EE\u6807\u53D8\u91CF",
+            config.scriptTargets && Object.keys(config.scriptTargets).length > 0 ? Object.keys(config.scriptTargets).join(", ") : "(\u672A\u914D\u7F6E)"
+          ],
+          [
+            "computed \u5305\u88F9",
+            config.scriptReactive === true ? "\u662F" : "\u5426"
           ]
         ] : [],
         ["UI \u7EC4\u4EF6\u5E93", config.uiLibrary || "element-plus"],
@@ -91249,8 +91645,7 @@ var fs = require("fs");
 var { execSync } = require("child_process");
 var { scanFiles } = require_scanner();
 var {
-  loadLocaleReverseMap,
-  appendNewKeys
+  loadLocaleReverseMap
 } = require_locale_manager();
 var { lookupKey } = require_key_generator();
 var { replaceInFile } = require_replacer();
@@ -91323,7 +91718,8 @@ function normalizeConfig(config) {
   return {
     projectPath: config.projectPath || ".",
     scanScript: config.scanScript !== void 0 ? config.scanScript : true,
-    scanScriptDeclarations: config.scanScriptDeclarations !== void 0 ? config.scanScriptDeclarations : true,
+    scriptTargets: config.scriptTargets || {},
+    scriptReactive: config.scriptReactive !== void 0 ? config.scriptReactive : false,
     entry: config.entry || ["src/**/*.vue"],
     exclude: config.exclude || [],
     output: config.output || "src/locales",
@@ -91605,44 +92001,73 @@ function groupByFile(items) {
 function printDryRun(fileGroups, matched, unmatched, special, filesScanned, errors) {
   console.log("");
   const fileNames = Object.keys(fileGroups).sort();
-  for (const fileName of fileNames) {
-    const items = fileGroups[fileName];
-    const matchedCount = items.filter((i) => i.key).length;
-    const unmatchedCount = items.filter((i) => !i.key && !i.reason).length;
-    const specialCount = items.filter((i) => i.reason).length;
-    const parts = [];
-    if (matchedCount > 0) parts.push(`${matchedCount} \u6761\u5DF2\u5339\u914D`);
-    if (unmatchedCount > 0) parts.push(`${unmatchedCount} \u6761\u672A\u5339\u914D`);
-    if (specialCount > 0) parts.push(`${specialCount} \u6761\u7279\u6B8A`);
-    console.log(`  ${fileName}: ${parts.join(", ")}`);
+  const sections = ["template", "script"];
+  const sectionNames = { template: "Template", script: "Script" };
+  for (const section of sections) {
+    const sectionFiles = {};
+    for (const fileName of fileNames) {
+      const items = fileGroups[fileName];
+      const sectionItems = items.filter(
+        (i) => i.section === section && !i.reason
+      );
+      if (sectionItems.length > 0) {
+        sectionFiles[fileName] = sectionItems;
+      }
+    }
+    if (Object.keys(sectionFiles).length === 0) continue;
+    console.log(`  [${sectionNames[section]}]:`);
+    for (const fileName of Object.keys(sectionFiles).sort()) {
+      const items = sectionFiles[fileName];
+      const matchedCount = items.filter((i) => i.key).length;
+      const unmatchedCount = items.filter((i) => !i.key).length;
+      const parts = [];
+      if (matchedCount > 0) parts.push(`${matchedCount} \u6761\u5DF2\u5339\u914D`);
+      if (unmatchedCount > 0) parts.push(`${unmatchedCount} \u6761\u672A\u5339\u914D`);
+      console.log(`    ${fileName}: ${parts.join(", ")}`);
+    }
   }
   printSeparator("\u9884\u89C8\u6A21\u5F0F - \u4E0D\u4F1A\u4FEE\u6539\u4EFB\u4F55\u6587\u4EF6");
-  for (const fileName of fileNames) {
-    const items = fileGroups[fileName];
-    const normalItems = items.filter((i) => !i.reason);
-    if (normalItems.length === 0) continue;
-    printFileHeader(fileName);
-    for (const item of normalItems) {
-      const { line, chineseText, key, type, attrName, context } = item;
-      console.log(`  L ${String(line).padEnd(4)} \u2502 ${chineseText}`);
-      if (key) {
-        if (type === "static-attr") {
-          console.log(`       \u2502 \u2192  :${attrName}="$t('${key}')"`);
-        } else if (type === "dynamic-attr") {
-          console.log(`       \u2502 \u2192  $t('${key}')`);
-        } else if (type === "text-content") {
-          console.log(`       \u2502 \u2192  {{ $t('${key}') }}`);
-        } else if (type === "interpolation") {
-          console.log(`       \u2502 \u2192  $t('${key}')`);
-        } else {
-          console.log(`       \u2502 \u2192  $t('${key}')`);
-        }
-      } else {
-        console.log(`       \u2502 \u2192  [\u672A\u5339\u914D] \u9700\u624B\u52A8\u5904\u7406`);
+  for (const section of sections) {
+    const sectionFileNames = [];
+    for (const fileName of fileNames) {
+      const items = fileGroups[fileName];
+      const normalItems = items.filter(
+        (i) => !i.reason && i.section === section
+      );
+      if (normalItems.length > 0) {
+        sectionFileNames.push(fileName);
       }
-      if (context) {
-        const shortCtx = context.length > 70 ? context.slice(0, 70) + "..." : context;
-        console.log(`       \u2502 ${shortCtx}`);
+    }
+    if (sectionFileNames.length === 0) continue;
+    printSeparator(`  ${sectionNames[section]}  `);
+    for (const fileName of sectionFileNames.sort()) {
+      const items = fileGroups[fileName];
+      const normalItems = items.filter(
+        (i) => !i.reason && i.section === section
+      );
+      printFileHeader(fileName);
+      for (const item of normalItems) {
+        const { line, chineseText, key, type, attrName, context } = item;
+        console.log(`  L ${String(line).padEnd(4)} \u2502 ${chineseText}`);
+        if (key) {
+          if (type === "static-attr") {
+            console.log(`       \u2502 \u2192  :${attrName}="$t('${key}')"`);
+          } else if (type === "dynamic-attr") {
+            console.log(`       \u2502 \u2192  $t('${key}')`);
+          } else if (type === "text-content") {
+            console.log(`       \u2502 \u2192  {{ $t('${key}') }}`);
+          } else if (type === "interpolation") {
+            console.log(`       \u2502 \u2192  $t('${key}')`);
+          } else {
+            console.log(`       \u2502 \u2192  $t('${key}')`);
+          }
+        } else {
+          console.log(`       \u2502 \u2192  [\u672A\u5339\u914D] \u9700\u624B\u52A8\u5904\u7406`);
+        }
+        if (context) {
+          const shortCtx = context.length > 70 ? context.slice(0, 70) + "..." : context;
+          console.log(`       \u2502 ${shortCtx}`);
+        }
       }
     }
   }
@@ -91695,14 +92120,18 @@ function printDryRun(fileGroups, matched, unmatched, special, filesScanned, erro
       }
     }
   }
+  const templateMatched = matched.filter((i) => i.section === "template").length;
+  const scriptMatched = matched.filter((i) => i.section === "script").length;
+  const templateUnmatched = unmatched.filter((i) => i.section === "template").length;
+  const scriptUnmatched = unmatched.filter((i) => i.section === "script").length;
   console.log("");
   printSeparator("i18n \u626B\u63CF\u6C47\u603B");
   console.log(`  \u626B\u63CF\u6587\u4EF6:     ${filesScanned}`);
   console.log(
     `  \u53D1\u73B0\u5B57\u7B26\u4E32:   ${matched.length + unmatched.length + special.length}`
   );
-  console.log(`  \u5DF2\u5339\u914D:       ${matched.length}`);
-  console.log(`  \u672A\u5339\u914D:       ${unmatched.length}`);
+  console.log(`  \u5DF2\u5339\u914D:       ${matched.length}  (template: ${templateMatched}, script: ${scriptMatched})`);
+  console.log(`  \u672A\u5339\u914D:       ${unmatched.length}  (template: ${templateUnmatched}, script: ${scriptUnmatched})`);
   console.log(`  \u7279\u6B8A-\u672A\u5904\u7406:  ${special.length}`);
   console.log(`  \u9519\u8BEF:         ${errors.length}`);
   printSeparator();
@@ -91836,29 +92265,24 @@ async function runScan(fileGroups, matched, unmatched, special, filesScanned, er
   for (const [relPath, items] of Object.entries(fileGroups)) {
     const filePath = path.resolve(PROJECT_ROOT, relPath);
     if (!fs.existsSync(filePath)) continue;
-    const { changed, newKeys } = replaceInFile(filePath, items, reverseMap);
+    const { changed, newKeys } = replaceInFile(filePath, items, reverseMap, config.scriptReactive);
     if (changed) filesModified++;
     allNewKeys.push(...newKeys);
   }
-  const newChineseTexts = unmatched.map((item) => item.chineseText);
-  const addedKeys = appendNewKeys(
-    outputDir,
-    config.sourceLanguage,
-    config.targetLanguages,
-    newChineseTexts
-  );
+  const tm = matched.filter((i) => i.section === "template").length;
+  const sm = matched.filter((i) => i.section === "script").length;
+  const tu = unmatched.filter((i) => i.section === "template").length;
+  const su = unmatched.filter((i) => i.section === "script").length;
   console.log("");
   printSeparator("\u66FF\u6362\u5B8C\u6210");
   console.log(`  \u4FEE\u6539\u6587\u4EF6:     ${filesModified}`);
-  console.log(`  \u5DF2\u5339\u914D\u66FF\u6362:   ${matched.length}`);
-  console.log(`  \u672A\u5339\u914D\u8DF3\u8FC7:   ${unmatched.length}`);
+  console.log(`  \u5DF2\u5339\u914D\u66FF\u6362:   ${matched.length}  (template: ${tm}, script: ${sm})`);
+  console.log(`  \u672A\u5339\u914D\u8DF3\u8FC7:   ${unmatched.length}  (template: ${tu}, script: ${su})`);
   console.log(`  \u7279\u6B8A\u8DF3\u8FC7:     ${special.length}`);
-  if (addedKeys.length > 0) {
+  if (unmatched.length > 0) {
     console.log("");
-    console.log("  \u26A0 \u4EE5\u4E0B\u4E2D\u6587\u672A\u5339\u914D\uFF0C\u5DF2\u8FFD\u52A0\u5230\u8BED\u8A00\u5305\uFF0C\u8BF7\u624B\u52A8\u7FFB\u8BD1:");
-    for (const item of addedKeys) {
-      console.log(`    + [common] ${item.chineseText} \u2192 $t('${item.key}')`);
-    }
+    console.log("  \u26A0 \u4EE5\u4E0A\u672A\u5339\u914D\u7684\u4E2D\u6587\u672A\u66FF\u6362\uFF0C\u8BF7\u5148\u8FD0\u884C --translate \u8FDB\u884C AI \u7FFB\u8BD1\uFF0C");
+    console.log("    \u6216\u624B\u52A8\u5C06\u7FFB\u8BD1\u6DFB\u52A0\u5230\u8BED\u8A00\u5305\u540E\u518D\u6267\u884C --scan\u3002");
   }
   console.log("");
   console.log("  \u63D0\u793A: \u8BF7\u68C0\u67E5\u4FEE\u6539\u540E\u7684\u6587\u4EF6\uFF0C\u786E\u8BA4\u65E0\u8BEF\u540E\u63D0\u4EA4");
