@@ -61,11 +61,17 @@ function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}
         init.type === 'CallExpression' &&
         getFullMethodName(init.callee) === 'computed'
 
+      // 仅当 init 是纯字符串/模板字符串时，computed 包裹才有意义
+      // ref()/reactive() 包裹的变量不应被 computed 包裹，会破坏类型
+      const isPlainValue =
+        init.type === 'StringLiteral' || init.type === 'TemplateLiteral'
+
       // 构建变量元数据（供 replacer 做 computed 包裹）
       const meta = {
         varName,
         isConst,
         isComputed,
+        isPlainValue,
         initStartLine: init.loc ? init.loc.start.line + scriptStartLine : 0,
         initStartCol: init.loc ? init.loc.start.column : 0,
         initEndLine: init.loc ? init.loc.end.line + scriptStartLine : 0,

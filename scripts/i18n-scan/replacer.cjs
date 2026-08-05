@@ -189,6 +189,8 @@ function wrapWithComputed(lines, allItems) {
     if (!item.varName || !item.isConst) continue
     // 已经是 computed() 包裹的变量不重复包裹
     if (item.isComputed) continue
+    // 仅纯文本值（非 ref/reactive 包裹）才需要 computed 包裹
+    if (!item.isPlainValue) continue
     // 同一变量只保留第一个（元数据相同）
     if (!varGroups[item.varName]) {
       varGroups[item.varName] = item
@@ -233,6 +235,27 @@ function wrapSingleInit(lines, meta) {
       lines[endIdx] = lines[endIdx] + ')'
     }
   }
+}
+
+/**
+ * 从 import 起始行向后扫描，找到 import 语句真正的结束位置
+ * 处理多行 import：import { a,\n  b\n } from 'x' 的情况
+ * 找到 from '...' 所在行的换行符作为插入点
+ * @param {string} content - 文件完整内容
+ * @param {number} startPos - import 起始行末尾位置
+ * @returns {number} 插入位置（from 行换行符之后，或退化为 startPos 后第一个换行符）
+ */
+function skipToImportEnd(content, startPos) {
+  const remaining = content.slice(startPos)
+  const fromMatch = remaining.match(/from\s*['"][^'"]*['"]/)
+  if (fromMatch) {
+    const fromEnd = startPos + fromMatch.index + fromMatch[0].length
+    const nextNewline = content.indexOf('\n', fromEnd)
+    return nextNewline >= 0 ? nextNewline + 1 : fromEnd
+  }
+  // 无 from（如 import 'module'），退化为原逻辑
+  const nextNewline = content.indexOf('\n', startPos)
+  return nextNewline >= 0 ? nextNewline + 1 : startPos
 }
 
 /**
@@ -289,8 +312,7 @@ function injectImports(filePath) {
 
     if (lastImportEnd >= 0) {
       let insertPos = afterTagIdx + lastImportEnd
-      const afterImport = content.indexOf('\n', insertPos)
-      insertPos = afterImport >= 0 ? afterImport + 1 : insertPos
+      insertPos = skipToImportEnd(content, insertPos)
       newContent =
         content.slice(0, insertPos) + importBlock + content.slice(insertPos)
     } else {
@@ -319,8 +341,7 @@ function injectImports(filePath) {
 
     if (lastImportEnd >= 0) {
       let insertPos = lastImportEnd
-      const afterImport = content.indexOf('\n', insertPos)
-      insertPos = afterImport >= 0 ? afterImport + 1 : insertPos
+      insertPos = skipToImportEnd(content, insertPos)
       newContent =
         content.slice(0, insertPos) + importBlock + content.slice(insertPos)
     } else {

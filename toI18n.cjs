@@ -1,6 +1,6 @@
 // toI18n.cjs — Vue 3 i18n 自动扫描脚本
 // 用法: node toI18n.cjs
-// 生成时间: 2026-08-03T10:11:10.495Z
+// 生成时间: 2026-08-04T09:59:25.811Z
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) => function __require() {
@@ -88449,10 +88449,12 @@ var require_script_parser = __commonJS({
           if (shouldSkipByInit(init)) return;
           const isConst = path2.parent.kind === "const";
           const isComputed = init.type === "CallExpression" && getFullMethodName(init.callee) === "computed";
+          const isPlainValue = init.type === "StringLiteral" || init.type === "TemplateLiteral";
           const meta = {
             varName,
             isConst,
             isComputed,
+            isPlainValue,
             initStartLine: init.loc ? init.loc.start.line + scriptStartLine : 0,
             initStartCol: init.loc ? init.loc.start.column : 0,
             initEndLine: init.loc ? init.loc.end.line + scriptStartLine : 0,
@@ -89267,6 +89269,7 @@ var require_replacer = __commonJS({
       for (const item of allItems) {
         if (!item.varName || !item.isConst) continue;
         if (item.isComputed) continue;
+        if (!item.isPlainValue) continue;
         if (!varGroups[item.varName]) {
           varGroups[item.varName] = item;
         }
@@ -89295,6 +89298,17 @@ var require_replacer = __commonJS({
           lines[endIdx] = lines[endIdx] + ")";
         }
       }
+    }
+    function skipToImportEnd(content, startPos) {
+      const remaining = content.slice(startPos);
+      const fromMatch = remaining.match(/from\s*['"][^'"]*['"]/);
+      if (fromMatch) {
+        const fromEnd = startPos + fromMatch.index + fromMatch[0].length;
+        const nextNewline2 = content.indexOf("\n", fromEnd);
+        return nextNewline2 >= 0 ? nextNewline2 + 1 : fromEnd;
+      }
+      const nextNewline = content.indexOf("\n", startPos);
+      return nextNewline >= 0 ? nextNewline + 1 : startPos;
     }
     function injectImports(filePath) {
       const content = fs2.readFileSync(filePath, "utf-8");
@@ -89328,8 +89342,7 @@ var require_replacer = __commonJS({
         let newContent = content;
         if (lastImportEnd >= 0) {
           let insertPos = afterTagIdx + lastImportEnd;
-          const afterImport = content.indexOf("\n", insertPos);
-          insertPos = afterImport >= 0 ? afterImport + 1 : insertPos;
+          insertPos = skipToImportEnd(content, insertPos);
           newContent = content.slice(0, insertPos) + importBlock + content.slice(insertPos);
         } else {
           let insertPos = afterTagIdx;
@@ -89349,8 +89362,7 @@ var require_replacer = __commonJS({
         let newContent = content;
         if (lastImportEnd >= 0) {
           let insertPos = lastImportEnd;
-          const afterImport = content.indexOf("\n", insertPos);
-          insertPos = afterImport >= 0 ? afterImport + 1 : insertPos;
+          insertPos = skipToImportEnd(content, insertPos);
           newContent = content.slice(0, insertPos) + importBlock + content.slice(insertPos);
         } else {
           newContent = importBlock + "\n" + content;
@@ -90962,6 +90974,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       "label",
       "placeholder",
       "title",
+      "tip-content",
       "title-info",
       "alt",
       "message",
@@ -90973,7 +90986,8 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       "start-placeholder",
       "end-placeholder",
       "error",
-      "tip"
+      "tip",
+      "label-text"
     ];
     var DEFAULT_IGNORE_ATTRIBUTES = [
       "style",
@@ -91018,7 +91032,8 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       "ElMessageBox.*",
       "ElNotification.*",
       "alert",
-      "confirm"
+      "confirm",
+      "showWarningMessage"
     ];
     var SOURCE_LANGUAGE_OPTIONS = [
       { value: "zh-CN", label: "zh-CN\uFF08\u7B80\u4F53\u4E2D\u6587\uFF09" },
@@ -91060,7 +91075,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       {
         key: "projectPath",
         title: "\u9879\u76EE\u6839\u76EE\u5F55",
-        description: "\u9700\u8981\u56FD\u9645\u5316\u7684\u9879\u76EE\u6240\u5728\u76EE\u5F55\uFF0C\u76F8\u5BF9\u4E8E\u672C\u811A\u672C\u7684\u4F4D\u7F6E\uFF08Tab \u8865\u5168\u8DEF\u5F84\uFF09",
+        description: "\u9700\u8981\u56FD\u9645\u5316\u7684\u9879\u76EE\u6240\u5728\u76EE\u5F55\uFF0C\u76F8\u5BF9\u4E8E\u672C\u811A\u672C\u7684\u4F4D\u7F6E",
         type: "path",
         default: "./"
       },
@@ -91779,6 +91794,7 @@ async function main() {
   }
   PROJECT_ROOT = path.resolve(config.projectPath || SCRIPT_DIR);
   if (mode === "init") {
+    ensureVueI18n(PROJECT_ROOT);
     await runInit(config, PROJECT_ROOT);
     return;
   }
@@ -91935,6 +91951,14 @@ async function prepareScanResults(config, projectRoot) {
       special.push(item);
       continue;
     }
+    if (hasHtmlTags(chineseText)) {
+      special.push({
+        ...item,
+        type: "special-html-in-string",
+        reason: "\u5B57\u7B26\u4E32\u542B HTML \u6807\u7B7E\uFF0C\u9700\u4EBA\u5DE5\u5904\u7406"
+      });
+      continue;
+    }
     const {
       key,
       module: module2,
@@ -91988,6 +92012,9 @@ async function runScanMode(config, modeOverride) {
       { skipConfirm: true }
     );
   }
+}
+function hasHtmlTags(text) {
+  return /<\/?\w+[^>]*>/.test(text);
 }
 function groupByFile(items) {
   const groups = {};
@@ -92242,6 +92269,46 @@ function writeGapLog(byFile, totalCount, filesScanned, errors, config) {
   console.log(`
   \u76F2\u533A\u65E5\u5FD7: ${path.relative(PROJECT_ROOT, logFile)}`);
 }
+function writeSpecialLog(special, config) {
+  if (special.length === 0) return;
+  const logDir = path.resolve(PROJECT_ROOT, config.logDir || "logs");
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+  const dateStr = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const logFile = path.join(logDir, `i18n-special-${dateStr}.log`);
+  const specialByFile = {};
+  for (const item of special) {
+    const relPath = item.file ? path.relative(PROJECT_ROOT, item.file).replace(/\\/g, "/") : "unknown";
+    if (!specialByFile[relPath]) specialByFile[relPath] = [];
+    specialByFile[relPath].push(item);
+  }
+  const lines = [];
+  lines.push(`i18n \u7279\u6B8A\u9879\u62A5\u544A\uFF08\u9700\u4EBA\u5DE5\u5904\u7406\uFF09`);
+  lines.push(`\u751F\u6210\u65F6\u95F4: ${(/* @__PURE__ */ new Date()).toISOString()}`);
+  lines.push(`\u7279\u6B8A\u9879\u5408\u8BA1: ${special.length} \u5904\uFF0C\u6D89\u53CA ${Object.keys(specialByFile).length} \u4E2A\u6587\u4EF6`);
+  lines.push(`=`.repeat(60));
+  lines.push("");
+  for (const fileName of Object.keys(specialByFile).sort()) {
+    const items = specialByFile[fileName];
+    lines.push(`[${fileName}] (${items.length} \u5904)`);
+    for (const item of items) {
+      const reason = item.reason || item.type;
+      lines.push(`  L ${String(item.line).padEnd(4)} \u2502 ${item.chineseText}`);
+      lines.push(`       \u2502 \u7C7B\u578B: ${item.type}  \u539F\u56E0: ${reason}`);
+      if (item.attrName) {
+        lines.push(`       \u2502 \u5C5E\u6027: ${item.attrName}`);
+      }
+      if (item.context) {
+        const shortCtx = item.context.length > 100 ? item.context.slice(0, 100) + "..." : item.context;
+        lines.push(`       \u2502 ${shortCtx}`);
+      }
+    }
+    lines.push("");
+  }
+  fs.writeFileSync(logFile, lines.join("\n"), "utf-8");
+  console.log(`  \u7279\u6B8A\u9879\u65E5\u5FD7: ${path.relative(PROJECT_ROOT, logFile)}`);
+}
 async function runScan(fileGroups, matched, unmatched, special, filesScanned, errors, config, reverseMap, options = {}) {
   const { skipConfirm = false } = options;
   const outputDir = path.resolve(PROJECT_ROOT, config.output);
@@ -92287,6 +92354,7 @@ async function runScan(fileGroups, matched, unmatched, special, filesScanned, er
   console.log("");
   console.log("  \u63D0\u793A: \u8BF7\u68C0\u67E5\u4FEE\u6539\u540E\u7684\u6587\u4EF6\uFF0C\u786E\u8BA4\u65E0\u8BEF\u540E\u63D0\u4EA4");
   printSeparator();
+  writeSpecialLog(special, config);
 }
 main().catch((err) => {
   console.error("\u811A\u672C\u6267\u884C\u5931\u8D25:", err);

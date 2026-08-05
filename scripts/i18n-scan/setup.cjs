@@ -568,6 +568,7 @@ const DEFAULT_TRANSLATE_ATTRIBUTES = [
   "label",
   "placeholder",
   "title",
+  "tip-content",
   "title-info",
   "alt",
   "message",
@@ -580,6 +581,7 @@ const DEFAULT_TRANSLATE_ATTRIBUTES = [
   "end-placeholder",
   "error",
   "tip",
+  "label-text",
 ];
 
 const DEFAULT_IGNORE_ATTRIBUTES = [
@@ -627,6 +629,7 @@ const DEFAULT_TRANSLATE_METHODS = [
   "ElNotification.*",
   "alert",
   "confirm",
+  "showWarningMessage",
 ];
 
 // ============================================================
@@ -679,7 +682,7 @@ const REQUIRED_ITEMS = [
   {
     key: "projectPath",
     title: "项目根目录",
-    description: "需要国际化的项目所在目录，相对于本脚本的位置（Tab 补全路径）",
+    description: "需要国际化的项目所在目录，相对于本脚本的位置",
     type: "path",
     default: "./",
   },

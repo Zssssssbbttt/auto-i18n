@@ -18,7 +18,7 @@
 | `-g` / `--gap` | 盲区扫描（输出所有中文，不受配置白名单限制） |
 | 无参数 | 交互模式：配置向导 → 依赖检查 → 初始化 → AI翻译(可选) → 预览 → 替换 |
 
-交互模式和 `--all` 模式在初始化前会自动检查项目 `package.json` 中是否有 `vue-i18n` 依赖，缺失则自动安装（自动识别 npm/yarn/pnpm）。
+交互模式、`--all` 和 `--init` 模式在初始化前会自动检查项目 `package.json` 中是否有 `vue-i18n` 依赖，缺失则自动安装（自动识别 npm/yarn/pnpm）。
 
 ## 模块架构
 
@@ -72,7 +72,7 @@ scripts/i18n-scan/
 1. 按文件分组，从后往前按行替换（避免行号偏移）
 2. 根据类型生成对应替换：`label="中文"` → `:label="$t('key')"`、`<span>中文</span>` → `<span>{{ $t('key') }}</span>`、`'中文'` → `$t('key')`
 3. template-literal 类型整体重建：`` `共${n}条` `` → `` `${$t('key1')}${n}${$t('key2')}` ``
-4. 若 `scriptReactive: true`，对 `const` 变量包裹 `computed(() => ...)`
+4. 若 `scriptReactive: true`，对纯文本值 `const` 变量包裹 `computed(() => ...)`（`ref()`/`reactive()` 包裹的变量不处理）
 5. 自动注入 import：
    - `import { $t } from '@/locales'`（检测是否已有，避免重复）
    - `import { computed } from 'vue'`（仅 scriptReactive 时，检测是否已有）
@@ -95,11 +95,11 @@ scripts/i18n-scan/
 - `entry` / `exclude` — 扫描范围（glob 模式），支持 `.vue`、`.ts`、`.js` 文件
 - `scanScript` — 是否扫描 `<script>` 中的中文（总开关），默认 true
 - `scriptTargets` — script 翻译目标变量配置，精确指定 **变量名 → 属性名数组** 的正向映射。如 `{ columns: ['label', 'title'] }` 只翻译 `columns` 变量的 `label` 和 `title` 属性。值为 `[]` 表示翻译该变量内所有中文（递归）。**不在配置中的变量不会被翻译**。
-- `scriptReactive` — 是否对 `const` 声明的翻译目标用 `computed(() => ...)` 包裹，使翻译结果响应式更新。默认 false。`let`/`var` 永不包裹。
+- `scriptReactive` — 是否对纯文本值 `const` 声明的翻译目标用 `computed(() => ...)` 包裹，使翻译结果响应式更新。仅当 init 为纯字符串/模板字符串时生效，`ref()`/`reactive()` 包裹的变量不处理。默认 false。`let`/`var` 永不包裹。
 - `uiLibrary` — UI 组件库类型（`"element-plus"` / `"vant"` / `"none"`），决定生成的 `index.ts` 模板和 `translateMethods` 默认值
 - `translateAttributes` — 需要翻译的 HTML 属性白名单（如 label, placeholder, title）
 - `ignoreAttributes` — 永远不翻译的属性黑名单（优先级更高）
-- `translateMethods` — 需要翻译的方法调用白名单（支持通配符如 ElMessage.*）。默认值根据 `uiLibrary` 自动设置：Element Plus → `['ElMessage.*', 'ElMessageBox.*', 'ElNotification.*', 'alert', 'confirm']`，Vant → `['Toast', 'Toast.*']`，无组件库 → `[]`
+- `translateMethods` — 需要翻译的方法调用白名单（支持通配符如 ElMessage.*）。默认值根据 `uiLibrary` 自动设置：Element Plus → `['ElMessage.*', 'ElMessageBox.*', 'ElNotification.*', 'alert', 'confirm', 'showWarningMessage']`，Vant → `['Toast', 'Toast.*']`，无组件库 → `[]`
 - `sourceLanguage` / `targetLanguages` — 源语言和目标语言列表
 - `output` — locale 输出目录（默认 src/locales）
 - `ai.enabled` / `ai.apiKey` / `ai.baseURL` / `ai.model` — AI 翻译配置

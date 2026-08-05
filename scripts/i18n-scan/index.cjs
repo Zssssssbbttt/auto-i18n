@@ -206,6 +206,7 @@ async function main() {
 
   // init 模式
   if (mode === "init") {
+    ensureVueI18n(PROJECT_ROOT);
     await runInit(config, PROJECT_ROOT);
     return;
   }
@@ -428,6 +429,16 @@ async function prepareScanResults(config, projectRoot) {
       continue;
     }
 
+    // 含 HTML 标签的字符串标记为特殊，不做自动替换
+    if (hasHtmlTags(chineseText)) {
+      special.push({
+        ...item,
+        type: "special-html-in-string",
+        reason: "字符串含 HTML 标签，需人工处理",
+      });
+      continue;
+    }
+
     // 查找 key
     const {
       key,
@@ -492,6 +503,15 @@ async function runScanMode(config, modeOverride) {
       { skipConfirm: true },
     );
   }
+}
+
+/**
+ * 检测字符串是否包含 HTML 标签
+ * 匹配 <tagname> 或 <tagname/> 或 </tagname> 形式
+ * 不匹配 HTML 实体（&lt; &gt;）和数学比较（a < b）
+ */
+function hasHtmlTags(text) {
+  return /<\/?\w+[^>]*>/.test(text)
 }
 
 /**
@@ -837,6 +857,60 @@ function writeGapLog(byFile, totalCount, filesScanned, errors, config) {
 }
 
 /**
+ * 将特殊项（含 HTML 标签等）写入日志文件
+ */
+function writeSpecialLog(special, config) {
+  if (special.length === 0) return
+
+  const logDir = path.resolve(PROJECT_ROOT, config.logDir || "logs");
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+
+  const dateStr = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const logFile = path.join(logDir, `i18n-special-${dateStr}.log`);
+
+  const specialByFile = {};
+  for (const item of special) {
+    const relPath = item.file
+      ? path.relative(PROJECT_ROOT, item.file).replace(/\\/g, "/")
+      : "unknown";
+    if (!specialByFile[relPath]) specialByFile[relPath] = [];
+    specialByFile[relPath].push(item);
+  }
+
+  const lines = [];
+  lines.push(`i18n 特殊项报告（需人工处理）`);
+  lines.push(`生成时间: ${new Date().toISOString()}`);
+  lines.push(`特殊项合计: ${special.length} 处，涉及 ${Object.keys(specialByFile).length} 个文件`);
+  lines.push(`=`.repeat(60));
+  lines.push("");
+
+  for (const fileName of Object.keys(specialByFile).sort()) {
+    const items = specialByFile[fileName];
+    lines.push(`[${fileName}] (${items.length} 处)`);
+    for (const item of items) {
+      const reason = item.reason || item.type;
+      lines.push(`  L ${String(item.line).padEnd(4)} │ ${item.chineseText}`);
+      lines.push(`       │ 类型: ${item.type}  原因: ${reason}`);
+      if (item.attrName) {
+        lines.push(`       │ 属性: ${item.attrName}`);
+      }
+      if (item.context) {
+        const shortCtx = item.context.length > 100
+          ? item.context.slice(0, 100) + "..."
+          : item.context;
+        lines.push(`       │ ${shortCtx}`);
+      }
+    }
+    lines.push("");
+  }
+
+  fs.writeFileSync(logFile, lines.join("\n"), "utf-8");
+  console.log(`  特殊项日志: ${path.relative(PROJECT_ROOT, logFile)}`);
+}
+
+/**
  * scan 模式：执行实际替换 + 更新语言包
  */
 async function runScan(
@@ -909,6 +983,9 @@ async function runScan(
   console.log("");
   console.log("  提示: 请检查修改后的文件，确认无误后提交");
   printSeparator();
+
+  // 写入特殊项日志
+  writeSpecialLog(special, config);
 }
 
 // 执行

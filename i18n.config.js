@@ -39,13 +39,13 @@ export default {
   localeStorageKey: "ZXY_locale",
 
   // 需要翻译的 HTML 属性
-  translateAttributes: ["label","placeholder","title","title-info","alt","message","content","desc","text","header","menuTitle","start-placeholder","end-placeholder","error","tip"],
+  translateAttributes: ["label","placeholder","title","tip-content","title-info","alt","message","content","desc","text","header","menuTitle","start-placeholder","end-placeholder","error","tip","label-text"],
 
   // 永远不翻译的属性
   ignoreAttributes: ["style","class","ref","rules","model","prop","key","slot","name","id","type","format","value-format","range-separator","prefix-icon","suffix-icon","scoped","lang","src","href","target","width","size","mode","disabled","clearable","filterable","remote","reserve-keyword","multiple","show-overflow-tooltip","align","maxlength","rows","trigger","icon"],
 
   // 需要翻译的方法调用（白名单，支持通配符如 ElMessage.*）
-  translateMethods: ["ElMessage.*","ElMessageBox.*","ElNotification.*","alert","confirm"],
+  translateMethods: ["ElMessage.*","ElMessageBox.*","ElNotification.*","alert","confirm","showWarningMessage"],
 
   // key 命名风格
   keyStyle: "camelCase",
