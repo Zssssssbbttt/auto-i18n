@@ -62,8 +62,9 @@ function detectPackageManager(projectRoot) {
 /**
  * 检查并自动安装 vue-i18n 依赖
  * @param {string} projectRoot - 项目根目录
+ * @param {number} vueVersion - Vue 版本（2 或 3）
  */
-function ensureVueI18n(projectRoot) {
+function ensureVueI18n(projectRoot, vueVersion) {
   const pkgPath = path.join(projectRoot, "package.json");
 
   if (!fs.existsSync(pkgPath)) {
@@ -89,13 +90,15 @@ function ensureVueI18n(projectRoot) {
     return;
   }
 
+  // 从版本模块获取正确的包名
+  const api = require(`./init/init-vue${vueVersion}.cjs`)
   const pm = detectPackageManager(projectRoot);
   const installCmd =
     pm === "yarn"
-      ? "yarn add vue-i18n"
+      ? `yarn add ${api.i18nPackageName}`
       : pm === "pnpm"
-        ? "pnpm add vue-i18n"
-        : "npm install vue-i18n";
+        ? `pnpm add ${api.i18nPackageName}`
+        : `npm install ${api.i18nPackageName}`;
 
   console.log(`  ⚠ 未检测到 vue-i18n 依赖，正在自动安装...`);
   console.log(`  > ${installCmd}`);
@@ -120,13 +123,40 @@ async function loadConfig() {
 }
 
 /**
+ * 检测 Vue 版本
+ * 优先级：配置文件显式指定 > package.json 自动检测 > 默认值 3
+ * @param {object} config - 用户配置
+ * @returns {number} 2 或 3
+ */
+function detectVueVersion(config) {
+  // 1. 配置文件显式指定 → 优先
+  if (config.vueVersion) return config.vueVersion
+
+  // 2. 从 package.json 自动检测（路径相对于脚本目录解析）
+  const projectPath = config.projectPath || "."
+  const pkgPath = path.join(path.resolve(SCRIPT_DIR, projectPath), "package.json")
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"))
+    const vueVer = pkg.dependencies?.vue || pkg.devDependencies?.vue || ""
+    if (/^[\^~]?2/.test(vueVer)) return 2
+    if (/^[\^~]?3/.test(vueVer)) return 3
+  } catch {}
+
+  // 3. 默认 Vue 3
+  return 3
+}
+
+/**
  * 规范化配置，填充默认值
  * @param {object} config - 用户配置
  * @returns {object} 规范化后的配置
  */
 function normalizeConfig(config) {
+  const vueVersion = detectVueVersion(config)
+
   return {
     projectPath: config.projectPath || ".",
+    vueVersion,
     scanScript: config.scanScript !== undefined ? config.scanScript : true,
     scriptTargets: config.scriptTargets || {},
     scriptReactive: config.scriptReactive !== undefined ? config.scriptReactive : false,
@@ -143,7 +173,7 @@ function normalizeConfig(config) {
     ],
     logDir: config.logDir || "logs",
     ai: config.ai || { enabled: false },
-    uiLibrary: config.uiLibrary || "element-plus",
+    uiLibrary: config.uiLibrary || (vueVersion === 2 ? "element-ui" : "element-plus"),
     sharedLocales: config.sharedLocales || [],
   };
 }
@@ -202,11 +232,11 @@ async function main() {
   }
 
   // 从配置读取项目路径
-  PROJECT_ROOT = path.resolve(config.projectPath || SCRIPT_DIR);
+  PROJECT_ROOT = path.resolve(SCRIPT_DIR, config.projectPath || ".");
 
   // init 模式
   if (mode === "init") {
-    ensureVueI18n(PROJECT_ROOT);
+    ensureVueI18n(PROJECT_ROOT, config.vueVersion);
     await runInit(config, PROJECT_ROOT);
     return;
   }
@@ -216,7 +246,7 @@ async function main() {
     console.log("========== 全流程模式：init → translate → scan ==========\n");
 
     // 检查并自动安装 vue-i18n
-    ensureVueI18n(PROJECT_ROOT);
+    ensureVueI18n(PROJECT_ROOT, config.vueVersion);
 
     console.log("\n[1/3] 初始化...");
     await runInit(config, PROJECT_ROOT);
@@ -271,10 +301,10 @@ async function runInteractiveFlow() {
     console.error("配置加载失败，退出:", err.message);
     process.exit(1);
   }
-  PROJECT_ROOT = path.resolve(config.projectPath || SCRIPT_DIR);
+  PROJECT_ROOT = path.resolve(SCRIPT_DIR, config.projectPath || ".");
 
   // 检查并自动安装 vue-i18n
-  ensureVueI18n(PROJECT_ROOT);
+  ensureVueI18n(PROJECT_ROOT, config.vueVersion);
 
   // ========== Step 1: 初始化 ==========
   console.log("");
@@ -955,7 +985,7 @@ async function runScan(
     const filePath = path.resolve(PROJECT_ROOT, relPath);
     if (!fs.existsSync(filePath)) continue;
 
-    const { changed, newKeys } = replaceInFile(filePath, items, reverseMap, config.scriptReactive);
+    const { changed, newKeys } = replaceInFile(filePath, items, reverseMap, config.scriptReactive, config.vueVersion);
     if (changed) filesModified++;
     allNewKeys.push(...newKeys);
   }

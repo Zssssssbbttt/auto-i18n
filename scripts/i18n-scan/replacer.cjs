@@ -12,9 +12,10 @@ const fs = require('fs')
  * @param {object[]} items - 该文件的匹配结果
  * @param {object} reverseMap - locale 反向映射 { 中文: 'module.key' }
  * @param {boolean} scriptReactive - 是否对 const 变量包裹 computed
+ * @param {number} vueVersion - Vue 版本（2 或 3），影响 script 中 $t 的调用格式
  * @returns {{ changed: boolean, newKeys: string[] }}
  */
-function replaceInFile(filePath, items, reverseMap, scriptReactive = false) {
+function replaceInFile(filePath, items, reverseMap, scriptReactive = false, vueVersion = 3) {
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n')
   const newKeys = []
   let changed = false
@@ -116,7 +117,7 @@ function replaceInFile(filePath, items, reverseMap, scriptReactive = false) {
     )
 
     for (const item of lineItems) {
-      const replacement = buildReplacement(item, item.key)
+      const replacement = buildReplacement(item, item.key, vueVersion)
       if (!replacement) continue
 
       let start, end
@@ -130,7 +131,18 @@ function replaceInFile(filePath, items, reverseMap, scriptReactive = false) {
         end = idx + pattern.length
       } else {
         // 其他类型：定位中文文本
-        let idx = line.indexOf(item.chineseText)
+        // 优先用 AST 列号精确定位，避免同一行相同中文时命中错误位置
+        let idx
+        if (item.col !== undefined && item.col >= 0) {
+          if (line.slice(item.col, item.col + item.chineseText.length) === item.chineseText) {
+            idx = item.col
+          } else {
+            // 列号不匹配（源码可能已变更），回退到 indexOf
+            idx = line.indexOf(item.chineseText)
+          }
+        } else {
+          idx = line.indexOf(item.chineseText)
+        }
         if (idx === -1) continue
 
         start = idx
@@ -354,8 +366,11 @@ function injectImports(filePath) {
 
 /**
  * 根据匹配类型生成替换文本
+ * @param {object} item - 匹配结果项
+ * @param {string} key - locale key
+ * @param {number} vueVersion - Vue 版本（2 或 3）
  */
-function buildReplacement(item, key) {
+function buildReplacement(item, key, vueVersion = 3) {
   switch (item.type) {
     case 'static-attr':
       // label="中文" → :label="$t('key')"
@@ -371,8 +386,9 @@ function buildReplacement(item, key) {
       return `{{ $t('${key}') }}`
 
     case 'script-string':
-      // '中文' → $t('key')
-      return `$t('${key}')`
+      // Vue 3: '中文' → $t('key')
+      // Vue 2: '中文' → this.$t('key')
+      return vueVersion === 2 ? `this.$t('${key}')` : `$t('${key}')`
 
     default:
       return null

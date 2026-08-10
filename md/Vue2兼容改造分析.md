@@ -633,10 +633,73 @@ node scripts/i18n-scan/index.cjs -s    # 替换
 
 ---
 
-## 不改动的文件
+## 八、最终改动总结
 
-- `scanner.cjs`、`replacer.cjs`、`translator.cjs`
-- `parsers/vue-sfc-parser.cjs`、`parsers/script-parser.cjs`
+### 新增文件
+
+| 文件 | 用途 |
+|------|------|
+| `init/init-vue3.cjs` | Vue 3 模板生成（从 init.cjs 提取），导出 `i18nPackageName`、`generateIndexContent`、`generateTypeToString`、`generateUseI18n`、`updateMainTs` |
+| `init/init-vue2.cjs` | Vue 2 模板生成（参考 vue2-scan/init.js），导出相同接口，Element UI 用 `element-ui/lib/locale`，`new VueI18n()` 创建实例 |
+
+### 修改文件
+
+| 文件 | 改动内容 |
+|------|----------|
+| `init.cjs` | 重构为调度入口：共享逻辑保留（目录创建、空 JSON、共享包校验），版本专用逻辑改为 `require('./init/init-vue${vueVersion}.cjs')` 加载 |
+| `index.cjs` | ① 新增 `detectVueVersion()` — 配置 > package.json > 默认 3；② `normalizeConfig()` 自动检测版本，`uiLibrary` 默认值随版本变化；③ `ensureVueI18n()` 从版本模块取 `i18nPackageName`（Vue 2 → `vue-i18n@8`）；④ 修复 `PROJECT_ROOT` 路径解析（相对脚本目录而非 CWD） |
+| `replacer.cjs` | `replaceInFile()` 新增 `vueVersion` 参数；`buildReplacement()` 中 `script-string` 类型：Vue 2 → `this.$t('key')`，Vue 3 → `$t('key')` |
+| `script-parser.cjs` | ① 新增 `ClassProperty` 访问器（Vue 2 class-based 组件属性声明）；② `getFullMethodName()` 支持 `ThisExpression` → `this` 前缀 |
+| `setup.cjs` | `vueVersion` 作为必答项第一位，配置写入和摘要展示同步更新 |
+
+### 不改动的文件
+
+- `scanner.cjs`、`translator.cjs`
+- `parsers/vue-sfc-parser.cjs`、`parsers/template-parser.cjs`
 - `generators/key-generator.cjs`、`generators/locale-manager.cjs`
 - `utils/chinese-detector.cjs`、`utils/logger.cjs`、`utils/validate-locales.cjs`
+
+### 架构原则
+
+- **一次分发**：版本判断只在 `index.cjs` 做一次，`config.vueVersion` 传递
+- **统一接口**：`init-vue2.cjs` 和 `init-vue3.cjs` 导出完全相同签名，调用方不区分版本
+- **物理隔离**：Vue 2 和 Vue 3 代码在不同文件，互不干扰
+- **Vue 3 零回归**：ClassProperty 和 ThisExpression 改动对 Vue 3 无副作用
+
+### Vue 2 项目使用方式
+
+`i18n.config.js` 配置示例：
+```js
+export default {
+  projectPath: "../../program/vue2-applicationSystemServices",
+  vueVersion: 2,                           // 显式指定，或靠 package.json 自动检测
+  uiLibrary: "element-ui",                 // Element UI（Vue 2 版）
+  translateMethods: [                      // Vue 2 使用 this.$message 方式
+    "this.$message.*",
+    "this.$confirm",
+    "this.$alert",
+    "this.$prompt",
+    "this.$notify.*",
+  ],
+  scriptTargets: {                         // class 属性名 → 要翻译的属性
+    FIXPROCESSSTATE: ["label"],
+    EmpowerRule: ["message"],
+    // ...
+  },
+  // ... 其余配置与 Vue 3 通用
+}
+```
+
+### 验证结果
+
+| 验证项 | 结果 |
+|--------|------|
+| Vue 3 PC 端 init（Element Plus） | 生成 `createI18n` + `element-plus` 模板，零回归 |
+| Vue 3 移动端 init（Vant/none） | 生成精简模板，零回归 |
+| Vue 2 init（Element UI） | 生成 `new VueI18n()` + `element-ui` 模板，main.ts 正确更新 |
+| Vue 2 扫描 | 57 文件，613 处中文（template 569 + script 38 + special 6） |
+| Vue 2 AI 翻译 | 272 条去重中文 → 271 条翻译，2 批完成 |
+| Vue 2 全流程 `-a` | init → translate → scan 全部成功 |
+| Vue 2 替换格式 | Template: `{{ $t('key') }}`，Script: `this.$t('key')` |
+| import 自动注入 | `import { $t } from '@/locales'` 正确添加 |
 - `test-full.cjs`

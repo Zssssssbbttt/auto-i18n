@@ -658,7 +658,8 @@ const TARGET_LANGUAGE_OPTIONS = [
 ];
 
 const UI_LIBRARY_OPTIONS = [
-  { value: "element-plus", label: "Element Plus" },
+  { value: "element-plus", label: "Element Plus（Vue 3）" },
+  { value: "element-ui", label: "Element UI（Vue 2）" },
   { value: "vant", label: "Vant" },
   { value: "none", label: "无组件库" },
 ];
@@ -679,6 +680,17 @@ const AI_MODEL_OPTIONS = [
 
 // 必答项
 const REQUIRED_ITEMS = [
+  {
+    key: "vueVersion",
+    title: "Vue 版本",
+    description: "项目使用的 Vue 版本，不确定可查看 package.json 中 vue 的版本号",
+    type: "select",
+    options: [
+      { value: 3, label: "Vue 3（默认）" },
+      { value: 2, label: "Vue 2" },
+    ],
+    default: 3,
+  },
   {
     key: "projectPath",
     title: "项目根目录",
@@ -1018,6 +1030,9 @@ function writeConfig(flat, configPath) {
   lines.push("// 用法: node scripts/i18n-scan/index.cjs");
   lines.push("// 预览: node scripts/i18n-scan/index.cjs --dry-run");
   lines.push("export default {");
+  lines.push("  // Vue 版本（2 或 3，默认自动检测）");
+  lines.push(`  vueVersion: ${nested.vueVersion || 3},`);
+  lines.push("");
   lines.push("  // 项目根目录路径（绝对路径或相对于本配置文件的路径）");
   lines.push(`  projectPath: ${JSON.stringify(nested.projectPath || "./")},`);
   lines.push("");
@@ -1034,7 +1049,7 @@ function writeConfig(flat, configPath) {
   lines.push("  // 是否用 computed 包裹 const 声明的翻译目标");
   lines.push(`  scriptReactive: ${nested.scriptReactive === true},`);
   lines.push("");
-  lines.push("  // UI 组件库（element-plus / vant / none）");
+  lines.push("  // UI 组件库（element-plus / element-ui / vant / none）");
   lines.push(
     `  uiLibrary: ${JSON.stringify(nested.uiLibrary || "element-plus")},`,
   );
@@ -1138,6 +1153,12 @@ async function runSetup(existingConfig, configPath) {
     for (const item of REQUIRED_ITEMS) {
       step++;
       const label = `${step}/${totalRequired}`;
+
+      // uiLibrary 默认值根据 Vue 版本动态调整
+      if (item.key === 'uiLibrary' && newConfig.vueVersion === 2 && item.default === 'element-plus') {
+        item.default = 'element-ui'
+      }
+
       const defaultValue = getConfigValue(
         existingConfig,
         item.key,
@@ -1207,6 +1228,13 @@ async function runSetup(existingConfig, configPath) {
     );
     const UI_TRANSLATE_METHODS_MAP = {
       "element-plus": DEFAULT_TRANSLATE_METHODS,
+      "element-ui": [
+        "this.$message.*",
+        "this.$confirm",
+        "this.$alert",
+        "this.$prompt",
+        "this.$notify.*",
+      ],
       vant: ["Toast", "Toast.*"],
       none: [],
     };
@@ -1340,6 +1368,7 @@ function formatValue(value, type) {
 
 function printSummary(config) {
   const rows = [
+    ["Vue 版本", config.vueVersion === 2 ? "Vue 2" : "Vue 3"],
     ["项目根目录", config.projectPath],
     ["扫描范围", config.entry],
     [

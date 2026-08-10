@@ -208,6 +208,7 @@ function handleStaticAttribute(
 
   results.push({
     line,
+    col: getCol(prop.value ? prop.value.loc : prop.loc),
     chineseText: attrValue.content,
     type: 'static-attr',
     attrName,
@@ -272,6 +273,7 @@ function handleDirective(
         chineseStrings.forEach((chineseText) => {
           results.push({
             line,
+            col: getCol(prop.exp ? prop.exp.loc : prop.loc),
             chineseText,
             type: 'dynamic-attr',
             attrName,
@@ -299,6 +301,7 @@ function walkText(node, results, lineOffset) {
 
   results.push({
     line,
+    col: getCol(node.loc),
     chineseText: trimmed,
     type: 'text-content',
     context: trimmed,
@@ -324,6 +327,7 @@ function walkInterpolation(node, results, lineOffset) {
     chineseStrings.forEach((chineseText) => {
       results.push({
         line,
+        col: getCol(node.loc),
         chineseText,
         type: 'interpolation',
         context: `{{ ${expression} }}`,
@@ -344,6 +348,7 @@ function walkCompoundExpression(node, results, lineOffset) {
         const line = getLine(node.loc, lineOffset)
         results.push({
           line,
+          col: getCol(node.loc),
           chineseText: child.trim(),
           type: 'compound-expression',
           context: child,
@@ -411,6 +416,16 @@ function getLine(loc, lineOffset) {
     return loc.start.line + lineOffset
   }
   return lineOffset + 1
+}
+
+/**
+ * 从 AST loc 获取列号（0-based）
+ */
+function getCol(loc) {
+  if (loc && loc.start && typeof loc.start.column === 'number') {
+    return loc.start.column
+  }
+  return 0
 }
 
 /**

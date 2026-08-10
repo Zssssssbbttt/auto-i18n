@@ -88,6 +88,46 @@ function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}
     },
 
     /**
+     * 路径1b：ClassProperty 访问器 — Vue 2 class-based 组件属性声明
+     * 处理 class 中的属性：columns = [{ label: '中文' }]
+     * Vue 3 <script setup> 中不存在 ClassProperty，此访问器无副作用
+     */
+    ClassProperty(path) {
+      if (targetVarNames.length === 0) return
+
+      if (!path.node.key || path.node.key.type !== 'Identifier') return
+      const varName = path.node.key.name
+      if (!targetVarNames.includes(varName)) return
+
+      const target = scriptTargets[varName]
+      const value = path.node.value
+      if (!value) return
+
+      // class 属性不是 const 声明，但为了兼容 meta 结构，标记 isConst: false
+      const isConst = false
+      const isComputed = false
+      const isPlainValue =
+        value.type === 'StringLiteral' || value.type === 'TemplateLiteral'
+
+      const meta = {
+        varName,
+        isConst,
+        isComputed,
+        isPlainValue,
+        initStartLine: value.loc ? value.loc.start.line + scriptStartLine : 0,
+        initStartCol: value.loc ? value.loc.start.column : 0,
+        initEndLine: value.loc ? value.loc.end.line + scriptStartLine : 0,
+        initEndCol: value.loc ? value.loc.end.column : 0,
+      }
+
+      if (target.length === 0) {
+        collectAllChinese(value, results, sourceLines, scriptStartLine, meta)
+      } else {
+        collectByProperties(value, target, results, sourceLines, scriptStartLine, meta)
+      }
+    },
+
+    /**
      * 路径2：StringLiteral 访问器 — 仅处理 translateMethods 白名单
      * 变量声明中的字符串由 VariableDeclarator 访问器处理
      */
@@ -709,6 +749,9 @@ function getFullMethodName(callee) {
     }
     if (current.type === 'Identifier') {
       parts.unshift(current.name)
+    }
+    if (current.type === 'ThisExpression') {
+      parts.unshift('this')
     }
     return parts.join('.')
   }

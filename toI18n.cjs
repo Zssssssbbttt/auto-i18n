@@ -1,8 +1,21 @@
 // toI18n.cjs — Vue 3 i18n 自动扫描脚本
 // 用法: node toI18n.cjs
-// 生成时间: 2026-08-04T09:59:25.811Z
+// 生成时间: 2026-08-10T12:08:19.893Z
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __glob = (map) => (path2) => {
+  var fn = map[path2];
+  if (fn) return fn();
+  throw new Error("Module not found in bundle: " + path2);
+};
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
+};
 var __commonJS = (cb, mod) => function __require() {
   try {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
@@ -10,6 +23,642 @@ var __commonJS = (cb, mod) => function __require() {
     throw mod = 0, e;
   }
 };
+
+// scripts/i18n-scan/init/init-vue2.cjs
+var require_init_vue2 = __commonJS({
+  "scripts/i18n-scan/init/init-vue2.cjs"(exports2, module2) {
+    var path2 = require("path");
+    var fs2 = require("fs");
+    var i18nPackageName = "vue-i18n@8";
+    function langToVarName(lang) {
+      const parts = lang.split("-");
+      return parts[0].toLowerCase() + parts.slice(1).map((p) => p[0].toUpperCase() + p.slice(1)).join("");
+    }
+    function capitalize(str) {
+      return str.charAt(0).toUpperCase() + str.slice(1);
+    }
+    function elementUILocalePath(lang) {
+      if (lang === "zh-CN") return "zh-CN";
+      return lang.split("-")[0];
+    }
+    function generateIndexContent(config, outputDir, projectRoot, validSharedLocales) {
+      const sourceLang = config.sourceLanguage || "zh-CN";
+      const targetLangs = config.targetLanguages || ["en"];
+      const storageKey = config.localeStorageKey || "lang";
+      const uiLibrary = config.uiLibrary || "element-ui";
+      const allLangs = [sourceLang, ...targetLangs.filter((l) => l !== sourceLang)];
+      let sharedImports = "";
+      const sharedVars = {};
+      for (const lang of allLangs) {
+        sharedVars[lang] = [];
+      }
+      for (let i = 0; i < validSharedLocales.length; i++) {
+        const sharedPath = validSharedLocales[i];
+        const absSharedPath = path2.resolve(projectRoot, sharedPath);
+        let relPath = path2.relative(outputDir, absSharedPath).replace(/\\/g, "/");
+        if (!relPath.startsWith(".")) {
+          relPath = "./" + relPath;
+        }
+        for (const lang of allLangs) {
+          const varName = `shared${langToVarName(lang)}${i}`;
+          sharedImports += `import ${varName} from '${relPath}/${lang}.json'
+`;
+          sharedVars[lang].push(varName);
+        }
+      }
+      const hasShared = validSharedLocales.length > 0;
+      const deepMergeFn = hasShared ? `
+function deepMerge(target: any, ...sources: any[]): any {
+  for (const source of sources) {
+    for (const key of Object.keys(source)) {
+      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+        if (!target[key]) target[key] = {}
+        deepMerge(target[key], source[key])
+      } else {
+        target[key] = source[key]
+      }
+    }
+  }
+  return target
+}
+` : "";
+      const messagesLines = allLangs.map((lang) => {
+        const localVar = langToVarName(lang);
+        if (hasShared) {
+          const args = ["{}", ...sharedVars[lang], localVar].join(", ");
+          return `    '${lang}': deepMerge(${args}),`;
+        }
+        return `    '${lang}': ${localVar},`;
+      }).join("\n");
+      const localImports = allLangs.map((lang) => `import ${langToVarName(lang)} from './${lang}.json'`).join("\n");
+      if (uiLibrary === "element-ui") {
+        const elementImports = allLangs.map((l) => `import element${capitalize(langToVarName(l))} from 'element-ui/lib/locale/lang/${elementUILocalePath(l)}'`).join("\n");
+        const elementEntries = allLangs.map((l) => `  '${l}': element${capitalize(langToVarName(l))},`).join("\n");
+        const defaultLocale = sourceLang;
+        return `import Vue from 'vue'
+import VueI18n from 'vue-i18n'
+import { i18nTypeToString } from './typeToString'
+${localImports}
+${sharedImports}import elementLocale from 'element-ui/lib/locale'
+${elementImports}${deepMergeFn}
+Vue.use(VueI18n)
+
+Vue.prototype.i18nTypeToString = i18nTypeToString
+
+const elementLocales: Record<string, any> = {
+${elementEntries}
+}
+
+const i18n = new VueI18n({
+  locale: localStorage.getItem('${storageKey}') || '${defaultLocale}',
+  messages: {
+${messagesLines}
+  },
+  silentTranslationWarn: true,
+})
+
+// \u521D\u59CB\u8BBE\u7F6E Element UI \u8BED\u8A00
+elementLocale.use(elementLocales[i18n.locale] || element${capitalize(langToVarName(defaultLocale))})
+
+export default i18n
+
+/**
+ * \u5207\u6362\u8BED\u8A00
+ * \u5728 Vue \u7EC4\u4EF6\u4E2D\u8C03\u7528: switchLanguage('en')
+ */
+export function switchLanguage(lang: string) {
+  i18n.locale = lang
+  localStorage.setItem('${storageKey}', lang)
+  elementLocale.use(elementLocales[lang] || element${capitalize(langToVarName(defaultLocale))})
+}
+`;
+      } else {
+        const defaultLocale = sourceLang;
+        return `import Vue from 'vue'
+import VueI18n from 'vue-i18n'
+${localImports}
+${sharedImports}${deepMergeFn}
+Vue.use(VueI18n)
+
+const i18n = new VueI18n({
+  locale: localStorage.getItem('${storageKey}') || '${defaultLocale}',
+  messages: {
+${messagesLines}
+  },
+  silentTranslationWarn: true,
+})
+
+export default i18n
+
+/**
+ * \u5207\u6362\u8BED\u8A00
+ */
+export function switchLanguage(lang: string) {
+  i18n.locale = lang
+  localStorage.setItem('${storageKey}', lang)
+}
+`;
+      }
+    }
+    function generateTypeToString() {
+      return `import i18n from './index'
+
+/**
+ * \u5C06 $t \u7684\u8FD4\u56DE\u503C\u5F3A\u5236\u8F6C\u4E3A string \u7C7B\u578B
+ * \u89E3\u51B3 vue-i18n \u4E2D $t \u8FD4\u56DE TranslateResult \u8054\u5408\u7C7B\u578B\u5BFC\u81F4\u7684 TS \u7C7B\u578B\u62A5\u9519
+ */
+export function i18nTypeToString(key: string): string {
+  const result = i18n.t(key)
+  return typeof result === 'string' ? result : String(result)
+}
+`;
+    }
+    function generateUseI18n() {
+      return `import i18n from './index'
+
+/**
+ * i18n composable
+ * \u5728 Vue \u7EC4\u4EF6\u4E2D\u4F7F\u7528: const { t } = useI18n()
+ * \u6A21\u677F\u4E2D\u53EF\u76F4\u63A5\u4F7F\u7528 {{ $t('key') }}\uFF08\u901A\u8FC7 Vue.prototype.$t \u5168\u5C40\u6CE8\u518C\uFF09
+ */
+export function useI18n() {
+  return { t: i18n.t }
+}
+`;
+    }
+    function updateMainTs(projectRoot) {
+      const mainFile = path2.join(projectRoot, "src", "main.ts");
+      if (!fs2.existsSync(mainFile)) {
+        console.log("  \u8B66\u544A: \u672A\u627E\u5230 src/main.ts\uFF0C\u8DF3\u8FC7\u5F15\u5165\u8DEF\u5F84\u66F4\u65B0");
+        return;
+      }
+      let content = fs2.readFileSync(mainFile, "utf-8");
+      const newImport = "import i18n, { $t } from './locales'";
+      const vnetImport = "import { setI18nInstance, getComponentMessages } from '@vnet/i18n'";
+      let changed = false;
+      if (content.includes(newImport)) {
+        console.log("  \u8DF3\u8FC7: main.ts \u5F15\u5165\u8DEF\u5F84\u5DF2\u6B63\u786E");
+      } else {
+        const lines = content.split("\n");
+        let lastImportLine = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (/^import\s+.+/.test(lines[i].trim())) {
+            lastImportLine = i;
+          }
+        }
+        if (lastImportLine >= 0) {
+          lines.splice(lastImportLine + 1, 0, newImport);
+          content = lines.join("\n");
+          console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 i18n \u5F15\u5165");
+          changed = true;
+        } else {
+          console.log("  \u8B66\u544A: main.ts \u4E2D\u672A\u627E\u5230 import \u8BED\u53E5\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 i18n \u5F15\u5165");
+        }
+      }
+      if (content.includes(vnetImport)) {
+        console.log("  \u8DF3\u8FC7: main.ts @vnet/i18n \u5F15\u5165\u5DF2\u5B58\u5728");
+      } else {
+        const lines = content.split("\n");
+        let lastImportLine = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (/^import\s+.+/.test(lines[i].trim())) {
+            lastImportLine = i;
+          }
+        }
+        if (lastImportLine >= 0) {
+          lines.splice(lastImportLine + 1, 0, vnetImport);
+          content = lines.join("\n");
+          console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u5F15\u5165");
+          changed = true;
+        } else {
+          console.log("  \u8B66\u544A: main.ts \u4E2D\u672A\u627E\u5230 import \u8BED\u53E5\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 @vnet/i18n \u5F15\u5165");
+        }
+      }
+      const globalTLine = "Vue.prototype.$t = $t";
+      if (!content.includes(globalTLine)) {
+        const lines = content.split("\n");
+        let inserted = false;
+        for (let i = 0; i < lines.length; i++) {
+          if (/^\s*new\s+Vue\s*\(\s*\{/.test(lines[i].trim())) {
+            lines.splice(
+              i,
+              0,
+              "",
+              `// \u5168\u5C40\u6CE8\u518C $t\uFF0C\u6A21\u677F\u548C\u811A\u672C\u4E2D\u53EF\u76F4\u63A5\u4F7F\u7528 this.$t()`,
+              globalTLine,
+              "",
+              `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
+              `// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
+              `const compMsgs = getComponentMessages()`,
+              `for (const locale of Object.keys(compMsgs)) {`,
+              `  i18n.mergeLocaleMessage(locale, compMsgs[locale])`,
+              `}`,
+              `setI18nInstance(i18n)`
+            );
+            content = lines.join("\n");
+            console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 Vue.prototype.$t \u5168\u5C40\u6CE8\u518C\u53CA @vnet/i18n \u6CE8\u518C");
+            changed = true;
+            inserted = true;
+            break;
+          }
+        }
+        if (!inserted) {
+          console.log("  \u8B66\u544A: \u672A\u627E\u5230 new Vue({\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 Vue.prototype.$t \u5168\u5C40\u6CE8\u518C");
+        }
+      } else {
+        console.log("  \u8DF3\u8FC7: main.ts Vue.prototype.$t \u6CE8\u518C\u5DF2\u5B58\u5728");
+        if (!content.includes("setI18nInstance(i18n)")) {
+          const lines = content.split("\n");
+          let inserted = false;
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].trim() === globalTLine) {
+              lines.splice(
+                i + 1,
+                0,
+                "",
+                `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
+                `// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
+                `const compMsgs = getComponentMessages()`,
+                `for (const locale of Object.keys(compMsgs)) {`,
+                `  i18n.mergeLocaleMessage(locale, compMsgs[locale])`,
+                `}`,
+                `setI18nInstance(i18n)`
+              );
+              content = lines.join("\n");
+              console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
+              changed = true;
+              inserted = true;
+              break;
+            }
+          }
+          if (!inserted) {
+            console.log("  \u8B66\u544A: \u672A\u627E\u5230 Vue.prototype.$t \u6CE8\u518C\u884C\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
+          }
+        } else {
+          console.log("  \u8DF3\u8FC7: main.ts @vnet/i18n \u6CE8\u518C\u4EE3\u7801\u5DF2\u5B58\u5728");
+        }
+      }
+      const vueInstanceRegex = /new\s+Vue\s*\(\s*\{([^}]*)\}/s;
+      const vueMatch = content.match(vueInstanceRegex);
+      const hasI18nOption = vueMatch && vueMatch[1] && vueMatch[1].includes("i18n");
+      if (!hasI18nOption) {
+        const lines = content.split("\n");
+        let inserted = false;
+        for (let i = 0; i < lines.length; i++) {
+          const trimmed = lines[i].trim();
+          if (/^\s*new\s+Vue\s*\(\s*\{/.test(trimmed)) {
+            const braceIdx = lines[i].indexOf("{");
+            if (braceIdx >= 0) {
+              lines[i] = lines[i].slice(0, braceIdx + 1) + "\n  i18n," + lines[i].slice(braceIdx + 1);
+            }
+            content = lines.join("\n");
+            console.log("  \u65B0\u589E: main.ts \u5728 new Vue \u9009\u9879\u4E2D\u6DFB\u52A0 i18n");
+            changed = true;
+            inserted = true;
+            break;
+          }
+        }
+        if (!inserted) {
+          console.log("  \u8B66\u544A: \u672A\u627E\u5230 new Vue({\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 i18n \u9009\u9879");
+        }
+      } else {
+        console.log("  \u8DF3\u8FC7: main.ts i18n \u9009\u9879\u5DF2\u5B58\u5728");
+      }
+      if (changed) {
+        fs2.writeFileSync(mainFile, content, "utf-8");
+      }
+    }
+    module2.exports = {
+      i18nPackageName,
+      generateIndexContent,
+      generateTypeToString,
+      generateUseI18n,
+      updateMainTs
+    };
+  }
+});
+
+// scripts/i18n-scan/init/init-vue3.cjs
+var require_init_vue3 = __commonJS({
+  "scripts/i18n-scan/init/init-vue3.cjs"(exports2, module2) {
+    var path2 = require("path");
+    var fs2 = require("fs");
+    var i18nPackageName = "vue-i18n";
+    function langToVarName(lang) {
+      const parts = lang.split("-");
+      return parts[0].toLowerCase() + parts.slice(1).map((p) => p[0].toUpperCase() + p.slice(1)).join("");
+    }
+    function generateIndexContent(config, outputDir, projectRoot, validSharedLocales) {
+      const sourceLang = config.sourceLanguage || "zh-CN";
+      const targetLangs = config.targetLanguages || ["en"];
+      const storageKey = config.localeStorageKey || "lang";
+      const uiLibrary = config.uiLibrary || "element-plus";
+      const allLangs = [sourceLang, ...targetLangs.filter((l) => l !== sourceLang)];
+      let sharedImports = "";
+      const sharedVars = {};
+      for (const lang of allLangs) {
+        sharedVars[lang] = [];
+      }
+      for (let i = 0; i < validSharedLocales.length; i++) {
+        const sharedPath = validSharedLocales[i];
+        const absSharedPath = path2.resolve(projectRoot, sharedPath);
+        let relPath = path2.relative(outputDir, absSharedPath).replace(/\\/g, "/");
+        if (!relPath.startsWith(".")) {
+          relPath = "./" + relPath;
+        }
+        for (const lang of allLangs) {
+          const varName = `shared${langToVarName(lang)}${i}`;
+          sharedImports += `import ${varName} from '${relPath}/${lang}.json'
+`;
+          sharedVars[lang].push(varName);
+        }
+      }
+      const hasShared = validSharedLocales.length > 0;
+      const deepMergeFn = hasShared ? `
+function deepMerge(target: any, ...sources: any[]): any {
+  for (const source of sources) {
+    for (const key of Object.keys(source)) {
+      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+        if (!target[key]) target[key] = {}
+        deepMerge(target[key], source[key])
+      } else {
+        target[key] = source[key]
+      }
+    }
+  }
+  return target
+}
+` : "";
+      const messagesLines = allLangs.map((lang) => {
+        const localVar = langToVarName(lang);
+        if (hasShared) {
+          const args = ["{}", ...sharedVars[lang], localVar].join(", ");
+          return `    '${lang}': deepMerge(${args}),`;
+        }
+        return `    '${lang}': ${localVar},`;
+      }).join("\n");
+      const localImports = allLangs.map((lang) => `import ${langToVarName(lang)} from './${lang}.json'`).join("\n");
+      if (uiLibrary === "element-plus") {
+        return `import { createI18n } from 'vue-i18n'
+import { i18nTypeToString } from './typeToString'
+import { ref, watch } from 'vue'
+import { localeContextKey } from 'element-plus'
+${localImports}
+${sharedImports}import zhCNElement from 'element-plus/dist/locale/zh-cn.mjs'
+import enElement from 'element-plus/dist/locale/en.mjs'${deepMergeFn}
+const elementLocales: Record<string, any> = {
+  'zh-CN': zhCNElement,
+  en: enElement,
+}
+
+const currentElementLocale = ref(
+  elementLocales[localStorage.getItem('${storageKey}') || 'zh-CN'] ||
+    elementLocales['zh-CN']
+)
+
+const i18n = createI18n({
+  legacy: false,
+  locale: localStorage.getItem('${storageKey}') || 'zh-CN',
+  messages: {
+${messagesLines}
+  },
+  silentTranslationWarn: true,
+})
+
+watch(
+  () => i18n.global.locale.value,
+  (newLocale) => {
+    currentElementLocale.value =
+      elementLocales[newLocale] || elementLocales['zh-CN']
+  }
+)
+
+// \u62E6\u622A install\uFF0C\u5728 app.use(i18n) \u65F6\u81EA\u52A8 provide Element Plus \u7684 locale
+const originalInstall = i18n.install.bind(i18n)
+i18n.install = (app: any) => {
+  originalInstall(app)
+  app.provide(localeContextKey, currentElementLocale)
+}
+
+export const $t = i18n.global.t
+
+export default i18n
+
+// \u5168\u5C40\u6CE8\u518C $t\uFF0C\u53EF\u5728 script setup \u4E2D\u76F4\u63A5\u4F7F\u7528
+export function setupI18n(app: any) {
+  app.use(i18n)
+  app.config.globalProperties.$t = i18n.global.t
+  app.config.globalProperties.i18nTypeToString = i18nTypeToString
+}
+`;
+      } else {
+        return `import { createI18n } from 'vue-i18n'
+${localImports}
+${sharedImports}${deepMergeFn}
+const i18n = createI18n({
+  legacy: false,
+  locale: localStorage.getItem('${storageKey}') || 'zh-CN',
+  messages: {
+${messagesLines}
+  },
+  silentTranslationWarn: true,
+})
+
+export const $t = i18n.global.t
+
+export default i18n
+
+export function setupI18n(app: any) {
+  app.use(i18n)
+  app.config.globalProperties.$t = i18n.global.t
+}
+`;
+      }
+    }
+    function generateTypeToString() {
+      return `import i18n from './index'
+
+/**
+ * \u5C06 $t \u7684\u8FD4\u56DE\u503C\u5F3A\u5236\u8F6C\u4E3A string \u7C7B\u578B
+ * \u89E3\u51B3 vue-i18n \u4E2D $t \u8FD4\u56DE TranslateResult \u8054\u5408\u7C7B\u578B\u5BFC\u81F4\u7684 TS \u7C7B\u578B\u62A5\u9519
+ */
+export function i18nTypeToString(key: string): string {
+  const result = i18n.global.t(key)
+  return typeof result === 'string' ? result : String(result)
+}
+`;
+    }
+    function generateUseI18n() {
+      return `import i18n from './index'
+
+/**
+ * i18n composable
+ * \u5728 <script setup> \u4E2D\u4F7F\u7528: const { t } = useI18n()
+ * \u6A21\u677F\u4E2D\u53EF\u76F4\u63A5\u4F7F\u7528 {{ t('key') }}
+ */
+export function useI18n() {
+  return { t: i18n.global.t }
+}
+`;
+    }
+    function updateMainTs(projectRoot) {
+      const mainFile = path2.join(projectRoot, "src", "main.ts");
+      if (!fs2.existsSync(mainFile)) {
+        console.log("  \u8B66\u544A: \u672A\u627E\u5230 src/main.ts\uFF0C\u8DF3\u8FC7\u5F15\u5165\u8DEF\u5F84\u66F4\u65B0");
+        return;
+      }
+      let content = fs2.readFileSync(mainFile, "utf-8");
+      const newImport = "import i18n, { $t } from './locales'";
+      const vnetImport = "import { setI18nInstance, getComponentMessages } from '@vnet/i18n'";
+      let changed = false;
+      if (content.includes(newImport)) {
+        console.log("  \u8DF3\u8FC7: main.ts \u5F15\u5165\u8DEF\u5F84\u5DF2\u6B63\u786E");
+      } else {
+        const lines = content.split("\n");
+        let lastImportLine = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (/^import\s+.+/.test(lines[i].trim())) {
+            lastImportLine = i;
+          }
+        }
+        if (lastImportLine >= 0) {
+          lines.splice(lastImportLine + 1, 0, newImport);
+          lastImportLine++;
+          content = lines.join("\n");
+          console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 i18n \u5F15\u5165");
+          changed = true;
+        } else {
+          console.log("  \u8B66\u544A: main.ts \u4E2D\u672A\u627E\u5230 import \u8BED\u53E5\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 i18n \u5F15\u5165");
+        }
+      }
+      if (content.includes(vnetImport)) {
+        console.log("  \u8DF3\u8FC7: main.ts @vnet/i18n \u5F15\u5165\u5DF2\u5B58\u5728");
+      } else {
+        const lines = content.split("\n");
+        let lastImportLine = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (/^import\s+.+/.test(lines[i].trim())) {
+            lastImportLine = i;
+          }
+        }
+        if (lastImportLine >= 0) {
+          lines.splice(lastImportLine + 1, 0, vnetImport);
+          content = lines.join("\n");
+          console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u5F15\u5165");
+          changed = true;
+        } else {
+          console.log("  \u8B66\u544A: main.ts \u4E2D\u672A\u627E\u5230 import \u8BED\u53E5\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 @vnet/i18n \u5F15\u5165");
+        }
+      }
+      const globalTLine = "app.config.globalProperties.$t = $t";
+      if (!content.includes(globalTLine)) {
+        const lines = content.split("\n");
+        let inserted = false;
+        for (let i = 0; i < lines.length; i++) {
+          if (/^\s*(?:const\s+)?app\s*=\s*createApp/.test(lines[i].trim())) {
+            lines.splice(
+              i + 1,
+              0,
+              "",
+              `// \u5168\u5C40\u6CE8\u518C $t\uFF0C\u6A21\u677F\u4E2D\u53EF\u76F4\u63A5\u4F7F\u7528`,
+              globalTLine,
+              "",
+              `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
+              `// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
+              `const compMsgs = getComponentMessages()`,
+              `for (const locale of Object.keys(compMsgs)) {`,
+              `  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
+              `}`,
+              `setI18nInstance(i18n)`
+            );
+            content = lines.join("\n");
+            console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0\u5168\u5C40 $t \u6CE8\u518C\u53CA @vnet/i18n \u6CE8\u518C");
+            changed = true;
+            inserted = true;
+            break;
+          }
+        }
+        if (!inserted) {
+          console.log("  \u8B66\u544A: \u672A\u627E\u5230 createApp\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0\u5168\u5C40 $t \u6CE8\u518C");
+        }
+      } else {
+        console.log("  \u8DF3\u8FC7: main.ts \u5168\u5C40 $t \u6CE8\u518C\u5DF2\u5B58\u5728");
+        if (!content.includes("setI18nInstance(i18n)")) {
+          const lines = content.split("\n");
+          let inserted = false;
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].trim() === globalTLine) {
+              lines.splice(
+                i + 1,
+                0,
+                "",
+                `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
+                `// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
+                `const compMsgs = getComponentMessages()`,
+                `for (const locale of Object.keys(compMsgs)) {`,
+                `  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
+                `}`,
+                `setI18nInstance(i18n)`
+              );
+              content = lines.join("\n");
+              console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
+              changed = true;
+              inserted = true;
+              break;
+            }
+          }
+          if (!inserted) {
+            console.log("  \u8B66\u544A: \u672A\u627E\u5230\u5168\u5C40 $t \u6CE8\u518C\u884C\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
+          }
+        } else {
+          console.log("  \u8DF3\u8FC7: main.ts @vnet/i18n \u6CE8\u518C\u4EE3\u7801\u5DF2\u5B58\u5728");
+        }
+      }
+      if (!content.includes(".use(i18n)")) {
+        const lines = content.split("\n");
+        let inserted = false;
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          const trimmed = line.trim();
+          if (trimmed.startsWith("//") || trimmed.startsWith("/*")) continue;
+          const mountIdx = line.indexOf(".mount(");
+          if (mountIdx === -1) continue;
+          const beforeMount = line.slice(0, mountIdx).trimEnd();
+          if (!beforeMount) {
+            const indent = line.slice(0, line.length - line.trimStart().length);
+            lines.splice(i, 0, `${indent}.use(i18n)`);
+          } else if (beforeMount.endsWith(")")) {
+            lines[i] = beforeMount + ".use(i18n)" + line.slice(mountIdx);
+          } else {
+            const indent = line.slice(0, line.length - line.trimStart().length);
+            const varName = beforeMount.trim();
+            lines.splice(i, 0, `${indent}${varName}.use(i18n)`);
+          }
+          content = lines.join("\n");
+          console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 app.use(i18n)");
+          changed = true;
+          inserted = true;
+          break;
+        }
+        if (!inserted) {
+          console.log("  \u8B66\u544A: \u672A\u627E\u5230 .mount(\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 app.use(i18n)");
+        }
+      } else {
+        console.log("  \u8DF3\u8FC7: main.ts app.use(i18n) \u5DF2\u5B58\u5728");
+      }
+      if (changed) {
+        fs2.writeFileSync(mainFile, content, "utf-8");
+      }
+    }
+    module2.exports = {
+      i18nPackageName,
+      generateIndexContent,
+      generateTypeToString,
+      generateUseI18n,
+      updateMainTs
+    };
+  }
+});
 
 // node_modules/fast-glob/out/utils/array.js
 var require_array = __commonJS({
@@ -60095,6 +60744,7 @@ var require_template_parser = __commonJS({
       const line = getLine(prop.loc, lineOffset);
       results.push({
         line,
+        col: getCol(prop.value ? prop.value.loc : prop.loc),
         chineseText: attrValue.content,
         type: "static-attr",
         attrName,
@@ -60130,6 +60780,7 @@ var require_template_parser = __commonJS({
             chineseStrings.forEach((chineseText) => {
               results.push({
                 line,
+                col: getCol(prop.exp ? prop.exp.loc : prop.loc),
                 chineseText,
                 type: "dynamic-attr",
                 attrName,
@@ -60148,6 +60799,7 @@ var require_template_parser = __commonJS({
       const line = getLine(node.loc, lineOffset);
       results.push({
         line,
+        col: getCol(node.loc),
         chineseText: trimmed,
         type: "text-content",
         context: trimmed
@@ -60163,6 +60815,7 @@ var require_template_parser = __commonJS({
         chineseStrings.forEach((chineseText) => {
           results.push({
             line,
+            col: getCol(node.loc),
             chineseText,
             type: "interpolation",
             context: `{{ ${expression} }}`
@@ -60178,6 +60831,7 @@ var require_template_parser = __commonJS({
             const line = getLine(node.loc, lineOffset);
             results.push({
               line,
+              col: getCol(node.loc),
               chineseText: child.trim(),
               type: "compound-expression",
               context: child
@@ -60222,6 +60876,12 @@ var require_template_parser = __commonJS({
         return loc.start.line + lineOffset;
       }
       return lineOffset + 1;
+    }
+    function getCol(loc) {
+      if (loc && loc.start && typeof loc.start.column === "number") {
+        return loc.start.column;
+      }
+      return 0;
     }
     function getSourceLine(loc, lineOffset) {
       if (loc && loc.source) {
@@ -88467,6 +89127,38 @@ var require_script_parser = __commonJS({
           }
         },
         /**
+         * 路径1b：ClassProperty 访问器 — Vue 2 class-based 组件属性声明
+         * 处理 class 中的属性：columns = [{ label: '中文' }]
+         * Vue 3 <script setup> 中不存在 ClassProperty，此访问器无副作用
+         */
+        ClassProperty(path2) {
+          if (targetVarNames.length === 0) return;
+          if (!path2.node.key || path2.node.key.type !== "Identifier") return;
+          const varName = path2.node.key.name;
+          if (!targetVarNames.includes(varName)) return;
+          const target = scriptTargets[varName];
+          const value = path2.node.value;
+          if (!value) return;
+          const isConst = false;
+          const isComputed = false;
+          const isPlainValue = value.type === "StringLiteral" || value.type === "TemplateLiteral";
+          const meta = {
+            varName,
+            isConst,
+            isComputed,
+            isPlainValue,
+            initStartLine: value.loc ? value.loc.start.line + scriptStartLine : 0,
+            initStartCol: value.loc ? value.loc.start.column : 0,
+            initEndLine: value.loc ? value.loc.end.line + scriptStartLine : 0,
+            initEndCol: value.loc ? value.loc.end.column : 0
+          };
+          if (target.length === 0) {
+            collectAllChinese(value, results, sourceLines, scriptStartLine, meta);
+          } else {
+            collectByProperties(value, target, results, sourceLines, scriptStartLine, meta);
+          }
+        },
+        /**
          * 路径2：StringLiteral 访问器 — 仅处理 translateMethods 白名单
          * 变量声明中的字符串由 VariableDeclarator 访问器处理
          */
@@ -88886,6 +89578,9 @@ var require_script_parser = __commonJS({
         if (current.type === "Identifier") {
           parts.unshift(current.name);
         }
+        if (current.type === "ThisExpression") {
+          parts.unshift("this");
+        }
         return parts.join(".");
       }
       if (callee.type === "Identifier") {
@@ -89147,7 +89842,7 @@ var require_key_generator = __commonJS({
 var require_replacer = __commonJS({
   "scripts/i18n-scan/replacer.cjs"(exports2, module2) {
     var fs2 = require("fs");
-    function replaceInFile2(filePath, items, reverseMap, scriptReactive = false) {
+    function replaceInFile2(filePath, items, reverseMap, scriptReactive = false, vueVersion = 3) {
       const lines = fs2.readFileSync(filePath, "utf-8").split("\n");
       const newKeys = [];
       let changed = false;
@@ -89224,7 +89919,7 @@ var require_replacer = __commonJS({
           (a, b) => b.chineseText.length - a.chineseText.length
         );
         for (const item of lineItems) {
-          const replacement = buildReplacement(item, item.key);
+          const replacement = buildReplacement(item, item.key, vueVersion);
           if (!replacement) continue;
           let start, end;
           if (item.type === "static-attr") {
@@ -89234,7 +89929,16 @@ var require_replacer = __commonJS({
             start = idx;
             end = idx + pattern.length;
           } else {
-            let idx = line.indexOf(item.chineseText);
+            let idx;
+            if (item.col !== void 0 && item.col >= 0) {
+              if (line.slice(item.col, item.col + item.chineseText.length) === item.chineseText) {
+                idx = item.col;
+              } else {
+                idx = line.indexOf(item.chineseText);
+              }
+            } else {
+              idx = line.indexOf(item.chineseText);
+            }
             if (idx === -1) continue;
             start = idx;
             end = idx + item.chineseText.length;
@@ -89370,7 +90074,7 @@ var require_replacer = __commonJS({
         fs2.writeFileSync(filePath, newContent, "utf-8");
       }
     }
-    function buildReplacement(item, key) {
+    function buildReplacement(item, key, vueVersion = 3) {
       switch (item.type) {
         case "static-attr":
           return `:${item.attrName}="$t('${key}')"`;
@@ -89380,7 +90084,7 @@ var require_replacer = __commonJS({
         case "text-content":
           return `{{ $t('${key}') }}`;
         case "script-string":
-          return `$t('${key}')`;
+          return vueVersion === 2 ? `this.$t('${key}')` : `$t('${key}')`;
         default:
           return null;
       }
@@ -90120,9 +90824,21 @@ var require_logger = __commonJS({
   }
 });
 
+// require("./init/init-vue*.cjs") in scripts/i18n-scan/init.cjs
+var globRequire_init_init_vue_cjs2;
+var init_ = __esm({
+  'require("./init/init-vue*.cjs") in scripts/i18n-scan/init.cjs'() {
+    globRequire_init_init_vue_cjs2 = __glob({
+      "./init/init-vue2.cjs": () => require_init_vue2(),
+      "./init/init-vue3.cjs": () => require_init_vue3()
+    });
+  }
+});
+
 // scripts/i18n-scan/init.cjs
 var require_init = __commonJS({
   "scripts/i18n-scan/init.cjs"(exports2, module2) {
+    init_();
     var path2 = require("path");
     var fs2 = require("fs");
     var { validateLocalePaths } = require_validate_locales();
@@ -90144,7 +90860,6 @@ var require_init = __commonJS({
       const outputDir = path2.resolve(projectRoot, config.output || "src/locales");
       const sourceLang = config.sourceLanguage || "zh-CN";
       const targetLangs = config.targetLanguages || ["en"];
-      const storageKey = config.localeStorageKey || "lang";
       if (!fs2.existsSync(outputDir)) {
         fs2.mkdirSync(outputDir, { recursive: true });
       }
@@ -90198,9 +90913,11 @@ var require_init = __commonJS({
           }
         }
       }
+      const vueVersion = config.vueVersion || 3;
+      const api = globRequire_init_init_vue_cjs2(`./init/init-vue${vueVersion}.cjs`);
       const indexFile = path2.join(outputDir, "index.ts");
       if (!fs2.existsSync(indexFile)) {
-        const indexContent = generateIndexContent(
+        const indexContent = api.generateIndexContent(
           config,
           outputDir,
           projectRoot,
@@ -90213,327 +90930,25 @@ var require_init = __commonJS({
       }
       const typeToStringFile = path2.join(outputDir, "typeToString.ts");
       if (!fs2.existsSync(typeToStringFile)) {
-        const typeToStringContent = `import i18n from './index'
-
-/**
- * \u5C06 $t \u7684\u8FD4\u56DE\u503C\u5F3A\u5236\u8F6C\u4E3A string \u7C7B\u578B
- * \u89E3\u51B3 vue-i18n \u4E2D $t \u8FD4\u56DE TranslateResult \u8054\u5408\u7C7B\u578B\u5BFC\u81F4\u7684 TS \u7C7B\u578B\u62A5\u9519
- */
-export function i18nTypeToString(key: string): string {
-  const result = i18n.global.t(key)
-  return typeof result === 'string' ? result : String(result)
-}
-`;
-        fs2.writeFileSync(typeToStringFile, typeToStringContent, "utf-8");
+        fs2.writeFileSync(typeToStringFile, api.generateTypeToString(), "utf-8");
         console.log(`  \u521B\u5EFA: typeToString.ts`);
       } else {
         console.log(`  \u8DF3\u8FC7: typeToString.ts\uFF08\u5DF2\u5B58\u5728\uFF09`);
       }
       const composableFile = path2.join(outputDir, "useI18n.ts");
       if (!fs2.existsSync(composableFile)) {
-        const composableContent = `import i18n from './index'
-
-/**
- * i18n composable
- * \u5728 <script setup> \u4E2D\u4F7F\u7528: const { t } = useI18n()
- * \u6A21\u677F\u4E2D\u53EF\u76F4\u63A5\u4F7F\u7528 {{ t('key') }}
- */
-export function useI18n() {
-  return { t: i18n.global.t }
-}
-`;
-        fs2.writeFileSync(composableFile, composableContent, "utf-8");
+        fs2.writeFileSync(composableFile, api.generateUseI18n(), "utf-8");
         console.log(`  \u521B\u5EFA: useI18n.ts`);
       } else {
         console.log(`  \u8DF3\u8FC7: useI18n.ts\uFF08\u5DF2\u5B58\u5728\uFF09`);
       }
-      updateMainTs(projectRoot);
+      api.updateMainTs(projectRoot);
       console.log("\n\u521D\u59CB\u5316\u5B8C\u6210");
-    }
-    function langToVarName(lang) {
-      const parts = lang.split("-");
-      return parts[0].toLowerCase() + parts.slice(1).map((p) => p[0].toUpperCase() + p.slice(1)).join("");
-    }
-    function generateIndexContent(config, outputDir, projectRoot, validSharedLocales) {
-      const sourceLang = config.sourceLanguage || "zh-CN";
-      const targetLangs = config.targetLanguages || ["en"];
-      const storageKey = config.localeStorageKey || "lang";
-      const uiLibrary = config.uiLibrary || "element-plus";
-      const allLangs = [sourceLang, ...targetLangs.filter((l) => l !== sourceLang)];
-      let sharedImports = "";
-      const sharedVars = {};
-      for (const lang of allLangs) {
-        sharedVars[lang] = [];
-      }
-      for (let i = 0; i < validSharedLocales.length; i++) {
-        const sharedPath = validSharedLocales[i];
-        const absSharedPath = path2.resolve(projectRoot, sharedPath);
-        let relPath = path2.relative(outputDir, absSharedPath).replace(/\\/g, "/");
-        if (!relPath.startsWith(".")) {
-          relPath = "./" + relPath;
-        }
-        for (const lang of allLangs) {
-          const varName = `shared${langToVarName(lang)}${i}`;
-          sharedImports += `import ${varName} from '${relPath}/${lang}.json'
-`;
-          sharedVars[lang].push(varName);
-        }
-      }
-      const hasShared = validSharedLocales.length > 0;
-      const deepMergeFn = hasShared ? `
-function deepMerge(target: any, ...sources: any[]): any {
-  for (const source of sources) {
-    for (const key of Object.keys(source)) {
-      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
-        if (!target[key]) target[key] = {}
-        deepMerge(target[key], source[key])
-      } else {
-        target[key] = source[key]
-      }
-    }
-  }
-  return target
-}
-` : "";
-      const messagesLines = allLangs.map((lang) => {
-        const localVar = langToVarName(lang);
-        if (hasShared) {
-          const args = ["{}", ...sharedVars[lang], localVar].join(", ");
-          return `    '${lang}': deepMerge(${args}),`;
-        }
-        return `    '${lang}': ${localVar},`;
-      }).join("\n");
-      const localImports = allLangs.map((lang) => `import ${langToVarName(lang)} from './${lang}.json'`).join("\n");
-      if (uiLibrary === "element-plus") {
-        return `import { createI18n } from 'vue-i18n'
-import { i18nTypeToString } from './typeToString'
-import { ref, watch } from 'vue'
-import { localeContextKey } from 'element-plus'
-${localImports}
-${sharedImports}import zhCNElement from 'element-plus/dist/locale/zh-cn.mjs'
-import enElement from 'element-plus/dist/locale/en.mjs'${deepMergeFn}
-const elementLocales: Record<string, any> = {
-  'zh-CN': zhCNElement,
-  en: enElement,
-}
-
-const currentElementLocale = ref(
-  elementLocales[localStorage.getItem('${storageKey}') || 'zh-CN'] ||
-    elementLocales['zh-CN']
-)
-
-const i18n = createI18n({
-  legacy: false,
-  locale: localStorage.getItem('${storageKey}') || 'zh-CN',
-  messages: {
-${messagesLines}
-  },
-  silentTranslationWarn: true,
-})
-
-watch(
-  () => i18n.global.locale.value,
-  (newLocale) => {
-    currentElementLocale.value =
-      elementLocales[newLocale] || elementLocales['zh-CN']
-  }
-)
-
-// \u62E6\u622A install\uFF0C\u5728 app.use(i18n) \u65F6\u81EA\u52A8 provide Element Plus \u7684 locale
-const originalInstall = i18n.install.bind(i18n)
-i18n.install = (app: any) => {
-  originalInstall(app)
-  app.provide(localeContextKey, currentElementLocale)
-}
-
-export const $t = i18n.global.t
-
-export default i18n
-
-// \u5168\u5C40\u6CE8\u518C $t\uFF0C\u53EF\u5728 script setup \u4E2D\u76F4\u63A5\u4F7F\u7528
-export function setupI18n(app: any) {
-  app.use(i18n)
-  app.config.globalProperties.$t = i18n.global.t
-  app.config.globalProperties.i18nTypeToString = i18nTypeToString
-}
-`;
-      } else {
-        return `import { createI18n } from 'vue-i18n'
-${localImports}
-${sharedImports}${deepMergeFn}
-const i18n = createI18n({
-  legacy: false,
-  locale: localStorage.getItem('${storageKey}') || 'zh-CN',
-  messages: {
-${messagesLines}
-  },
-  silentTranslationWarn: true,
-})
-
-export const $t = i18n.global.t
-
-export default i18n
-
-export function setupI18n(app: any) {
-  app.use(i18n)
-  app.config.globalProperties.$t = i18n.global.t
-}
-`;
-      }
     }
     async function main2() {
       const config = await loadConfig2();
       const projectRoot = path2.resolve(config.projectPath || SCRIPT_DIR2);
       await runInit2(config, projectRoot);
-    }
-    function updateMainTs(projectRoot) {
-      const mainFile = path2.join(projectRoot, "src", "main.ts");
-      if (!fs2.existsSync(mainFile)) {
-        console.log("  \u8B66\u544A: \u672A\u627E\u5230 src/main.ts\uFF0C\u8DF3\u8FC7\u5F15\u5165\u8DEF\u5F84\u66F4\u65B0");
-        return;
-      }
-      let content = fs2.readFileSync(mainFile, "utf-8");
-      const newImport = "import i18n, { $t } from './locales'";
-      const vnetImport = "import { setI18nInstance, getComponentMessages } from '@vnet/i18n'";
-      let changed = false;
-      if (content.includes(newImport)) {
-        console.log("  \u8DF3\u8FC7: main.ts \u5F15\u5165\u8DEF\u5F84\u5DF2\u6B63\u786E");
-      } else {
-        const lines = content.split("\n");
-        let lastImportLine = -1;
-        for (let i = 0; i < lines.length; i++) {
-          if (/^import\s+.+/.test(lines[i].trim())) {
-            lastImportLine = i;
-          }
-        }
-        if (lastImportLine >= 0) {
-          lines.splice(lastImportLine + 1, 0, newImport);
-          lastImportLine++;
-          content = lines.join("\n");
-          console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 i18n \u5F15\u5165");
-          changed = true;
-        } else {
-          console.log("  \u8B66\u544A: main.ts \u4E2D\u672A\u627E\u5230 import \u8BED\u53E5\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 i18n \u5F15\u5165");
-        }
-      }
-      if (content.includes(vnetImport)) {
-        console.log("  \u8DF3\u8FC7: main.ts @vnet/i18n \u5F15\u5165\u5DF2\u5B58\u5728");
-      } else {
-        const lines = content.split("\n");
-        let lastImportLine = -1;
-        for (let i = 0; i < lines.length; i++) {
-          if (/^import\s+.+/.test(lines[i].trim())) {
-            lastImportLine = i;
-          }
-        }
-        if (lastImportLine >= 0) {
-          lines.splice(lastImportLine + 1, 0, vnetImport);
-          content = lines.join("\n");
-          console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u5F15\u5165");
-          changed = true;
-        } else {
-          console.log("  \u8B66\u544A: main.ts \u4E2D\u672A\u627E\u5230 import \u8BED\u53E5\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 @vnet/i18n \u5F15\u5165");
-        }
-      }
-      const globalTLine = "app.config.globalProperties.$t = $t";
-      if (!content.includes(globalTLine)) {
-        const lines = content.split("\n");
-        let inserted = false;
-        for (let i = 0; i < lines.length; i++) {
-          if (/^\s*(?:const\s+)?app\s*=\s*createApp/.test(lines[i].trim())) {
-            lines.splice(
-              i + 1,
-              0,
-              "",
-              `// \u5168\u5C40\u6CE8\u518C $t\uFF0C\u6A21\u677F\u4E2D\u53EF\u76F4\u63A5\u4F7F\u7528`,
-              globalTLine,
-              "",
-              `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
-              `// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
-              `const compMsgs = getComponentMessages()`,
-              `for (const locale of Object.keys(compMsgs)) {`,
-              `  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
-              `}`,
-              `setI18nInstance(i18n)`
-            );
-            content = lines.join("\n");
-            console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0\u5168\u5C40 $t \u6CE8\u518C\u53CA @vnet/i18n \u6CE8\u518C");
-            changed = true;
-            inserted = true;
-            break;
-          }
-        }
-        if (!inserted) {
-          console.log("  \u8B66\u544A: \u672A\u627E\u5230 createApp\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0\u5168\u5C40 $t \u6CE8\u518C");
-        }
-      } else {
-        console.log("  \u8DF3\u8FC7: main.ts \u5168\u5C40 $t \u6CE8\u518C\u5DF2\u5B58\u5728");
-        if (!content.includes("setI18nInstance(i18n)")) {
-          const lines = content.split("\n");
-          let inserted = false;
-          for (let i = 0; i < lines.length; i++) {
-            if (lines[i].trim() === globalTLine) {
-              lines.splice(
-                i + 1,
-                0,
-                "",
-                `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
-                `// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
-                `const compMsgs = getComponentMessages()`,
-                `for (const locale of Object.keys(compMsgs)) {`,
-                `  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
-                `}`,
-                `setI18nInstance(i18n)`
-              );
-              content = lines.join("\n");
-              console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
-              changed = true;
-              inserted = true;
-              break;
-            }
-          }
-          if (!inserted) {
-            console.log("  \u8B66\u544A: \u672A\u627E\u5230\u5168\u5C40 $t \u6CE8\u518C\u884C\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
-          }
-        } else {
-          console.log("  \u8DF3\u8FC7: main.ts @vnet/i18n \u6CE8\u518C\u4EE3\u7801\u5DF2\u5B58\u5728");
-        }
-      }
-      if (!content.includes(".use(i18n)")) {
-        const lines = content.split("\n");
-        let inserted = false;
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          const trimmed = line.trim();
-          if (trimmed.startsWith("//") || trimmed.startsWith("/*")) continue;
-          const mountIdx = line.indexOf(".mount(");
-          if (mountIdx === -1) continue;
-          const beforeMount = line.slice(0, mountIdx).trimEnd();
-          if (!beforeMount) {
-            const indent = line.slice(0, line.length - line.trimStart().length);
-            lines.splice(i, 0, `${indent}.use(i18n)`);
-          } else if (beforeMount.endsWith(")")) {
-            lines[i] = beforeMount + ".use(i18n)" + line.slice(mountIdx);
-          } else {
-            const indent = line.slice(0, line.length - line.trimStart().length);
-            const varName = beforeMount.trim();
-            lines.splice(i, 0, `${indent}${varName}.use(i18n)`);
-          }
-          content = lines.join("\n");
-          console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 app.use(i18n)");
-          changed = true;
-          inserted = true;
-          break;
-        }
-        if (!inserted) {
-          console.log("  \u8B66\u544A: \u672A\u627E\u5230 .mount(\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 app.use(i18n)");
-        }
-      } else {
-        console.log("  \u8DF3\u8FC7: main.ts app.use(i18n) \u5DF2\u5B58\u5728");
-      }
-      if (changed) {
-        fs2.writeFileSync(mainFile, content, "utf-8");
-      }
     }
     module2.exports = { runInit: runInit2 };
     if (require.main === module2) {
@@ -91055,7 +91470,8 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       { value: "ru", label: "ru\uFF08\u4FC4\u8BED\uFF09" }
     ];
     var UI_LIBRARY_OPTIONS = [
-      { value: "element-plus", label: "Element Plus" },
+      { value: "element-plus", label: "Element Plus\uFF08Vue 3\uFF09" },
+      { value: "element-ui", label: "Element UI\uFF08Vue 2\uFF09" },
       { value: "vant", label: "Vant" },
       { value: "none", label: "\u65E0\u7EC4\u4EF6\u5E93" }
     ];
@@ -91072,6 +91488,17 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6 \u2014 Anthropic Claude" }
     ];
     var REQUIRED_ITEMS = [
+      {
+        key: "vueVersion",
+        title: "Vue \u7248\u672C",
+        description: "\u9879\u76EE\u4F7F\u7528\u7684 Vue \u7248\u672C\uFF0C\u4E0D\u786E\u5B9A\u53EF\u67E5\u770B package.json \u4E2D vue \u7684\u7248\u672C\u53F7",
+        type: "select",
+        options: [
+          { value: 3, label: "Vue 3\uFF08\u9ED8\u8BA4\uFF09" },
+          { value: 2, label: "Vue 2" }
+        ],
+        default: 3
+      },
       {
         key: "projectPath",
         title: "\u9879\u76EE\u6839\u76EE\u5F55",
@@ -91332,6 +91759,9 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       lines.push("// \u7528\u6CD5: node scripts/i18n-scan/index.cjs");
       lines.push("// \u9884\u89C8: node scripts/i18n-scan/index.cjs --dry-run");
       lines.push("export default {");
+      lines.push("  // Vue \u7248\u672C\uFF082 \u6216 3\uFF0C\u9ED8\u8BA4\u81EA\u52A8\u68C0\u6D4B\uFF09");
+      lines.push(`  vueVersion: ${nested.vueVersion || 3},`);
+      lines.push("");
       lines.push("  // \u9879\u76EE\u6839\u76EE\u5F55\u8DEF\u5F84\uFF08\u7EDD\u5BF9\u8DEF\u5F84\u6216\u76F8\u5BF9\u4E8E\u672C\u914D\u7F6E\u6587\u4EF6\u7684\u8DEF\u5F84\uFF09");
       lines.push(`  projectPath: ${JSON.stringify(nested.projectPath || "./")},`);
       lines.push("");
@@ -91348,7 +91778,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       lines.push("  // \u662F\u5426\u7528 computed \u5305\u88F9 const \u58F0\u660E\u7684\u7FFB\u8BD1\u76EE\u6807");
       lines.push(`  scriptReactive: ${nested.scriptReactive === true},`);
       lines.push("");
-      lines.push("  // UI \u7EC4\u4EF6\u5E93\uFF08element-plus / vant / none\uFF09");
+      lines.push("  // UI \u7EC4\u4EF6\u5E93\uFF08element-plus / element-ui / vant / none\uFF09");
       lines.push(
         `  uiLibrary: ${JSON.stringify(nested.uiLibrary || "element-plus")},`
       );
@@ -91434,6 +91864,9 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         for (const item of REQUIRED_ITEMS) {
           step++;
           const label = `${step}/${totalRequired}`;
+          if (item.key === "uiLibrary" && newConfig.vueVersion === 2 && item.default === "element-plus") {
+            item.default = "element-ui";
+          }
           const defaultValue = getConfigValue(
             existingConfig,
             item.key,
@@ -91480,6 +91913,13 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         );
         const UI_TRANSLATE_METHODS_MAP = {
           "element-plus": DEFAULT_TRANSLATE_METHODS,
+          "element-ui": [
+            "this.$message.*",
+            "this.$confirm",
+            "this.$alert",
+            "this.$prompt",
+            "this.$notify.*"
+          ],
           vant: ["Toast", "Toast.*"],
           none: []
         };
@@ -91586,6 +92026,7 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
     }
     function printSummary(config) {
       const rows = [
+        ["Vue \u7248\u672C", config.vueVersion === 2 ? "Vue 2" : "Vue 3"],
         ["\u9879\u76EE\u6839\u76EE\u5F55", config.projectPath],
         ["\u626B\u63CF\u8303\u56F4", config.entry],
         [
@@ -91654,6 +92095,12 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
   }
 });
 
+// require("./init/init-vue*.cjs") in scripts/i18n-scan/index.cjs
+var globRequire_init_init_vue_cjs = __glob({
+  "./init/init-vue2.cjs": () => require_init_vue2(),
+  "./init/init-vue3.cjs": () => require_init_vue3()
+});
+
 // scripts/i18n-scan/index.cjs
 var path = require("path");
 var fs = require("fs");
@@ -91689,7 +92136,7 @@ function detectPackageManager(projectRoot) {
   if (fs.existsSync(path.join(projectRoot, "yarn.lock"))) return "yarn";
   return "npm";
 }
-function ensureVueI18n(projectRoot) {
+function ensureVueI18n(projectRoot, vueVersion) {
   const pkgPath = path.join(projectRoot, "package.json");
   if (!fs.existsSync(pkgPath)) {
     console.log("  \u8B66\u544A: \u672A\u627E\u5230 package.json\uFF0C\u8DF3\u8FC7 vue-i18n \u4F9D\u8D56\u68C0\u67E5");
@@ -91710,8 +92157,9 @@ function ensureVueI18n(projectRoot) {
     console.log("  \u2713 vue-i18n \u4F9D\u8D56\u5DF2\u5B89\u88C5");
     return;
   }
+  const api = globRequire_init_init_vue_cjs(`./init/init-vue${vueVersion}.cjs`);
   const pm = detectPackageManager(projectRoot);
-  const installCmd = pm === "yarn" ? "yarn add vue-i18n" : pm === "pnpm" ? "pnpm add vue-i18n" : "npm install vue-i18n";
+  const installCmd = pm === "yarn" ? `yarn add ${api.i18nPackageName}` : pm === "pnpm" ? `pnpm add ${api.i18nPackageName}` : `npm install ${api.i18nPackageName}`;
   console.log(`  \u26A0 \u672A\u68C0\u6D4B\u5230 vue-i18n \u4F9D\u8D56\uFF0C\u6B63\u5728\u81EA\u52A8\u5B89\u88C5...`);
   console.log(`  > ${installCmd}`);
   try {
@@ -91729,9 +92177,24 @@ async function loadConfig() {
   const config = mod.default || mod;
   return normalizeConfig(config);
 }
+function detectVueVersion(config) {
+  if (config.vueVersion) return config.vueVersion;
+  const projectPath = config.projectPath || ".";
+  const pkgPath = path.join(path.resolve(SCRIPT_DIR, projectPath), "package.json");
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+    const vueVer = pkg.dependencies?.vue || pkg.devDependencies?.vue || "";
+    if (/^[\^~]?2/.test(vueVer)) return 2;
+    if (/^[\^~]?3/.test(vueVer)) return 3;
+  } catch {
+  }
+  return 3;
+}
 function normalizeConfig(config) {
+  const vueVersion = detectVueVersion(config);
   return {
     projectPath: config.projectPath || ".",
+    vueVersion,
     scanScript: config.scanScript !== void 0 ? config.scanScript : true,
     scriptTargets: config.scriptTargets || {},
     scriptReactive: config.scriptReactive !== void 0 ? config.scriptReactive : false,
@@ -91752,7 +92215,7 @@ function normalizeConfig(config) {
     ],
     logDir: config.logDir || "logs",
     ai: config.ai || { enabled: false },
-    uiLibrary: config.uiLibrary || "element-plus",
+    uiLibrary: config.uiLibrary || (vueVersion === 2 ? "element-ui" : "element-plus"),
     sharedLocales: config.sharedLocales || []
   };
 }
@@ -91792,15 +92255,15 @@ async function main() {
       process.exit(1);
     }
   }
-  PROJECT_ROOT = path.resolve(config.projectPath || SCRIPT_DIR);
+  PROJECT_ROOT = path.resolve(SCRIPT_DIR, config.projectPath || ".");
   if (mode === "init") {
-    ensureVueI18n(PROJECT_ROOT);
+    ensureVueI18n(PROJECT_ROOT, config.vueVersion);
     await runInit(config, PROJECT_ROOT);
     return;
   }
   if (mode === "all") {
     console.log("========== \u5168\u6D41\u7A0B\u6A21\u5F0F\uFF1Ainit \u2192 translate \u2192 scan ==========\n");
-    ensureVueI18n(PROJECT_ROOT);
+    ensureVueI18n(PROJECT_ROOT, config.vueVersion);
     console.log("\n[1/3] \u521D\u59CB\u5316...");
     await runInit(config, PROJECT_ROOT);
     console.log("\n[2/3] AI \u7FFB\u8BD1...");
@@ -91837,8 +92300,8 @@ async function runInteractiveFlow() {
     console.error("\u914D\u7F6E\u52A0\u8F7D\u5931\u8D25\uFF0C\u9000\u51FA:", err.message);
     process.exit(1);
   }
-  PROJECT_ROOT = path.resolve(config.projectPath || SCRIPT_DIR);
-  ensureVueI18n(PROJECT_ROOT);
+  PROJECT_ROOT = path.resolve(SCRIPT_DIR, config.projectPath || ".");
+  ensureVueI18n(PROJECT_ROOT, config.vueVersion);
   console.log("");
   printSeparator("\u6B65\u9AA4 1/4: \u521D\u59CB\u5316");
   await runInit(config, PROJECT_ROOT, {
@@ -92332,7 +92795,7 @@ async function runScan(fileGroups, matched, unmatched, special, filesScanned, er
   for (const [relPath, items] of Object.entries(fileGroups)) {
     const filePath = path.resolve(PROJECT_ROOT, relPath);
     if (!fs.existsSync(filePath)) continue;
-    const { changed, newKeys } = replaceInFile(filePath, items, reverseMap, config.scriptReactive);
+    const { changed, newKeys } = replaceInFile(filePath, items, reverseMap, config.scriptReactive, config.vueVersion);
     if (changed) filesModified++;
     allNewKeys.push(...newKeys);
   }
