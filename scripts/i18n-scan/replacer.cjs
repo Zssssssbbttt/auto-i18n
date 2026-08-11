@@ -126,7 +126,44 @@ function replaceInFile(filePath, items, reverseMap, scriptReactive = false, vueV
         // 静态属性：定位整个属性 label="中文" → :label="$t('key')"
         const pattern = `${item.attrName}="${item.chineseText}"`
         const idx = line.indexOf(pattern)
-        if (idx === -1) continue
+        if (idx === -1) {
+          // 可能跨多行（如 placeholder 值换行），尝试多行匹配
+          if (item.chineseText.includes('\n')) {
+            const startPattern = `${item.attrName}="`
+            const startIdx = line.indexOf(startPattern)
+            if (startIdx !== -1) {
+              // 找闭合引号所在行
+              let endLineIdx = lineIdx
+              let endCol = -1
+              for (let j = lineIdx; j < lines.length; j++) {
+                const searchFrom = j === lineIdx ? startIdx + startPattern.length : 0
+                const endIdx = lines[j].indexOf('"', searchFrom)
+                if (endIdx !== -1) {
+                  endLineIdx = j
+                  endCol = endIdx
+                  break
+                }
+              }
+              if (endCol !== -1) {
+                const firstPart = line.slice(0, startIdx)
+                const lastPart = lines[endLineIdx].slice(endCol + 1)
+                line = firstPart + replacement
+                lines[lineIdx] = line
+                // 清除中间行
+                for (let j = lineIdx + 1; j <= endLineIdx; j++) {
+                  if (j === endLineIdx) {
+                    lines[j] = lastPart
+                  } else {
+                    lines[j] = ''
+                  }
+                }
+                changed = true
+                continue
+              }
+            }
+          }
+          continue
+        }
         start = idx
         end = idx + pattern.length
       } else {

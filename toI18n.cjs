@@ -1,6 +1,6 @@
 // toI18n.cjs — Vue 3 i18n 自动扫描脚本
 // 用法: node toI18n.cjs
-// 生成时间: 2026-08-10T12:08:19.893Z
+// 生成时间: 2026-08-11T09:01:03.135Z
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __glob = (map) => (path2) => {
@@ -122,6 +122,8 @@ elementLocale.use(elementLocales[i18n.locale] || element${capitalize(langToVarNa
 
 export default i18n
 
+export const $t = i18n.t.bind(i18n)
+
 /**
  * \u5207\u6362\u8BED\u8A00
  * \u5728 Vue \u7EC4\u4EF6\u4E2D\u8C03\u7528: switchLanguage('en')
@@ -149,6 +151,8 @@ ${messagesLines}
 })
 
 export default i18n
+
+export const $t = i18n.t.bind(i18n)
 
 /**
  * \u5207\u6362\u8BED\u8A00
@@ -194,7 +198,6 @@ export function useI18n() {
       }
       let content = fs2.readFileSync(mainFile, "utf-8");
       const newImport = "import i18n, { $t } from './locales'";
-      const vnetImport = "import { setI18nInstance, getComponentMessages } from '@vnet/i18n'";
       let changed = false;
       if (content.includes(newImport)) {
         console.log("  \u8DF3\u8FC7: main.ts \u5F15\u5165\u8DEF\u5F84\u5DF2\u6B63\u786E");
@@ -215,25 +218,6 @@ export function useI18n() {
           console.log("  \u8B66\u544A: main.ts \u4E2D\u672A\u627E\u5230 import \u8BED\u53E5\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 i18n \u5F15\u5165");
         }
       }
-      if (content.includes(vnetImport)) {
-        console.log("  \u8DF3\u8FC7: main.ts @vnet/i18n \u5F15\u5165\u5DF2\u5B58\u5728");
-      } else {
-        const lines = content.split("\n");
-        let lastImportLine = -1;
-        for (let i = 0; i < lines.length; i++) {
-          if (/^import\s+.+/.test(lines[i].trim())) {
-            lastImportLine = i;
-          }
-        }
-        if (lastImportLine >= 0) {
-          lines.splice(lastImportLine + 1, 0, vnetImport);
-          content = lines.join("\n");
-          console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u5F15\u5165");
-          changed = true;
-        } else {
-          console.log("  \u8B66\u544A: main.ts \u4E2D\u672A\u627E\u5230 import \u8BED\u53E5\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 @vnet/i18n \u5F15\u5165");
-        }
-      }
       const globalTLine = "Vue.prototype.$t = $t";
       if (!content.includes(globalTLine)) {
         const lines = content.split("\n");
@@ -245,18 +229,10 @@ export function useI18n() {
               0,
               "",
               `// \u5168\u5C40\u6CE8\u518C $t\uFF0C\u6A21\u677F\u548C\u811A\u672C\u4E2D\u53EF\u76F4\u63A5\u4F7F\u7528 this.$t()`,
-              globalTLine,
-              "",
-              `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
-              `// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
-              `const compMsgs = getComponentMessages()`,
-              `for (const locale of Object.keys(compMsgs)) {`,
-              `  i18n.mergeLocaleMessage(locale, compMsgs[locale])`,
-              `}`,
-              `setI18nInstance(i18n)`
+              globalTLine
             );
             content = lines.join("\n");
-            console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 Vue.prototype.$t \u5168\u5C40\u6CE8\u518C\u53CA @vnet/i18n \u6CE8\u518C");
+            console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 Vue.prototype.$t \u5168\u5C40\u6CE8\u518C");
             changed = true;
             inserted = true;
             break;
@@ -267,36 +243,6 @@ export function useI18n() {
         }
       } else {
         console.log("  \u8DF3\u8FC7: main.ts Vue.prototype.$t \u6CE8\u518C\u5DF2\u5B58\u5728");
-        if (!content.includes("setI18nInstance(i18n)")) {
-          const lines = content.split("\n");
-          let inserted = false;
-          for (let i = 0; i < lines.length; i++) {
-            if (lines[i].trim() === globalTLine) {
-              lines.splice(
-                i + 1,
-                0,
-                "",
-                `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
-                `// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
-                `const compMsgs = getComponentMessages()`,
-                `for (const locale of Object.keys(compMsgs)) {`,
-                `  i18n.mergeLocaleMessage(locale, compMsgs[locale])`,
-                `}`,
-                `setI18nInstance(i18n)`
-              );
-              content = lines.join("\n");
-              console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
-              changed = true;
-              inserted = true;
-              break;
-            }
-          }
-          if (!inserted) {
-            console.log("  \u8B66\u544A: \u672A\u627E\u5230 Vue.prototype.$t \u6CE8\u518C\u884C\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
-          }
-        } else {
-          console.log("  \u8DF3\u8FC7: main.ts @vnet/i18n \u6CE8\u518C\u4EE3\u7801\u5DF2\u5B58\u5728");
-        }
       }
       const vueInstanceRegex = /new\s+Vue\s*\(\s*\{([^}]*)\}/s;
       const vueMatch = content.match(vueInstanceRegex);
@@ -60879,7 +60825,7 @@ var require_template_parser = __commonJS({
     }
     function getCol(loc) {
       if (loc && loc.start && typeof loc.start.column === "number") {
-        return loc.start.column;
+        return loc.start.column - 1;
       }
       return 0;
     }
@@ -60907,7 +60853,7 @@ var require_template_parser = __commonJS({
             expressions.push(parts[i]);
           }
         }
-        const templateStartCol = expLoc.start.column + match.index;
+        const templateStartCol = expLoc.start.column - 1 + match.index;
         const templateEndCol = templateStartCol + match[0].length - 1;
         quasis.forEach((quasi, idx) => {
           if (hasChinese(quasi)) {
@@ -89925,7 +89871,41 @@ var require_replacer = __commonJS({
           if (item.type === "static-attr") {
             const pattern = `${item.attrName}="${item.chineseText}"`;
             const idx = line.indexOf(pattern);
-            if (idx === -1) continue;
+            if (idx === -1) {
+              if (item.chineseText.includes("\n")) {
+                const startPattern = `${item.attrName}="`;
+                const startIdx = line.indexOf(startPattern);
+                if (startIdx !== -1) {
+                  let endLineIdx = lineIdx;
+                  let endCol = -1;
+                  for (let j = lineIdx; j < lines.length; j++) {
+                    const searchFrom = j === lineIdx ? startIdx + startPattern.length : 0;
+                    const endIdx = lines[j].indexOf('"', searchFrom);
+                    if (endIdx !== -1) {
+                      endLineIdx = j;
+                      endCol = endIdx;
+                      break;
+                    }
+                  }
+                  if (endCol !== -1) {
+                    const firstPart = line.slice(0, startIdx);
+                    const lastPart = lines[endLineIdx].slice(endCol + 1);
+                    line = firstPart + replacement;
+                    lines[lineIdx] = line;
+                    for (let j = lineIdx + 1; j <= endLineIdx; j++) {
+                      if (j === endLineIdx) {
+                        lines[j] = lastPart;
+                      } else {
+                        lines[j] = "";
+                      }
+                    }
+                    changed = true;
+                    continue;
+                  }
+                }
+              }
+              continue;
+            }
             start = idx;
             end = idx + pattern.length;
           } else {

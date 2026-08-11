@@ -12,13 +12,13 @@ node_modules
 dist
 dist-ssr
 coverage
-program
 *.local
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
+program
 *.suo
 *.ntvs*
 *.njsproj

@@ -153,6 +153,8 @@ elementLocale.use(elementLocales[i18n.locale] || element${capitalize(langToVarNa
 
 export default i18n
 
+export const $t = i18n.t.bind(i18n)
+
 /**
  * 切换语言
  * 在 Vue 组件中调用: switchLanguage('en')
@@ -182,6 +184,8 @@ ${messagesLines}
 })
 
 export default i18n
+
+export const $t = i18n.t.bind(i18n)
 
 /**
  * 切换语言
@@ -252,7 +256,6 @@ function updateMainTs(projectRoot) {
 
   let content = fs.readFileSync(mainFile, 'utf-8')
   const newImport = "import i18n, { $t } from './locales'"
-  const vnetImport = "import { setI18nInstance, getComponentMessages } from '@vnet/i18n'"
   let changed = false
 
   // 1. 处理 i18n import 引入
@@ -276,28 +279,7 @@ function updateMainTs(projectRoot) {
     }
   }
 
-  // 1.1 处理 @vnet/i18n 引入
-  if (content.includes(vnetImport)) {
-    console.log('  跳过: main.ts @vnet/i18n 引入已存在')
-  } else {
-    const lines = content.split('\n')
-    let lastImportLine = -1
-    for (let i = 0; i < lines.length; i++) {
-      if (/^import\s+.+/.test(lines[i].trim())) {
-        lastImportLine = i
-      }
-    }
-    if (lastImportLine >= 0) {
-      lines.splice(lastImportLine + 1, 0, vnetImport)
-      content = lines.join('\n')
-      console.log('  新增: main.ts 添加 @vnet/i18n 引入')
-      changed = true
-    } else {
-      console.log('  警告: main.ts 中未找到 import 语句，请手动添加 @vnet/i18n 引入')
-    }
-  }
-
-  // 2. 检查并补全 Vue.prototype.$t 全局注册 + @vnet/i18n 注册
+  // 2. 检查并补全 Vue.prototype.$t 全局注册
   const globalTLine = 'Vue.prototype.$t = $t'
   if (!content.includes(globalTLine)) {
     const lines = content.split('\n')
@@ -312,17 +294,9 @@ function updateMainTs(projectRoot) {
           '',
           `// 全局注册 $t，模板和脚本中可直接使用 this.$t()`,
           globalTLine,
-          '',
-          `// 将公共组件词条合并到当前 i18n 实例，并注册到 @vnet/i18n，`,
-          `// 使 FlowProcess 等公共组件能随项目语言切换`,
-          `const compMsgs = getComponentMessages()`,
-          `for (const locale of Object.keys(compMsgs)) {`,
-          `  i18n.mergeLocaleMessage(locale, compMsgs[locale])`,
-          `}`,
-          `setI18nInstance(i18n)`,
         )
         content = lines.join('\n')
-        console.log('  新增: main.ts 添加 Vue.prototype.$t 全局注册及 @vnet/i18n 注册')
+        console.log('  新增: main.ts 添加 Vue.prototype.$t 全局注册')
         changed = true
         inserted = true
         break
@@ -333,37 +307,6 @@ function updateMainTs(projectRoot) {
     }
   } else {
     console.log('  跳过: main.ts Vue.prototype.$t 注册已存在')
-    // 即使 $t 已存在，也要检查 @vnet/i18n 注册代码
-    if (!content.includes('setI18nInstance(i18n)')) {
-      const lines = content.split('\n')
-      let inserted = false
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].trim() === globalTLine) {
-          lines.splice(
-            i + 1,
-            0,
-            '',
-            `// 将公共组件词条合并到当前 i18n 实例，并注册到 @vnet/i18n，`,
-            `// 使 FlowProcess 等公共组件能随项目语言切换`,
-            `const compMsgs = getComponentMessages()`,
-            `for (const locale of Object.keys(compMsgs)) {`,
-            `  i18n.mergeLocaleMessage(locale, compMsgs[locale])`,
-            `}`,
-            `setI18nInstance(i18n)`,
-          )
-          content = lines.join('\n')
-          console.log('  新增: main.ts 添加 @vnet/i18n 注册代码')
-          changed = true
-          inserted = true
-          break
-        }
-      }
-      if (!inserted) {
-        console.log('  警告: 未找到 Vue.prototype.$t 注册行，请手动添加 @vnet/i18n 注册代码')
-      }
-    } else {
-      console.log('  跳过: main.ts @vnet/i18n 注册代码已存在')
-    }
   }
 
   // 3. 在 new Vue({ ... }) 的选项对象中插入 i18n 属性

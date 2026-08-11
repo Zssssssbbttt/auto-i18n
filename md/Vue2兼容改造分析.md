@@ -702,4 +702,57 @@ export default {
 | Vue 2 全流程 `-a` | init → translate → scan 全部成功 |
 | Vue 2 替换格式 | Template: `{{ $t('key') }}`，Script: `this.$t('key')` |
 | import 自动注入 | `import { $t } from '@/locales'` 正确添加 |
+
+---
+
+## 九、2026-08-11 修复记录
+
+### 修复 1：移除 Vue 2 模板中 `@vnet/i18n` 的生成
+
+**问题**：`init-vue2.cjs` 的 `updateMainTs()` 无条件生成 `@vnet/i18n` 的 import 和注册代码，但 Vue 2 项目通常没有这个依赖，导致 `main.ts` 编译报错。
+
+**修复**：从 `init-vue2.cjs` 的 `updateMainTs()` 中移除：
+- `import { setI18nInstance, getComponentMessages } from '@vnet/i18n'` 的注入
+- `getComponentMessages()` + `mergeLocaleMessage()` + `setI18nInstance()` 注册代码块的注入
+
+Vue 3 的 `init-vue3.cjs` 保持不变（`@vnet/i18n` 在 Vue 3 项目中可能是真实依赖）。
+
+### 修复 2：Vue 2 的 `index.ts` 模板缺少 `$t` 导出
+
+**问题**：`main.ts` 中 `import { $t } from './locales'`，但 `generateIndexContent()` 生成的 `index.ts` 没有 `export const $t`，导致运行时 `$t` 为 `undefined`。
+
+**修复**：在 `init-vue2.cjs` 的 `generateIndexContent()` 两个模板（element-ui 和 非 element-ui）中，`export default i18n` 之后添加：
+```js
+export const $t = i18n.t.bind(i18n)
+```
+
+### 修复 3：`@vue/compiler-dom` 列号 1-based → 0-based 转换
+
+**问题**：`template-parser.cjs` 的 `getCol()` 直接返回 `loc.start.column`（1-based），但 `replacer.cjs` 将其当作 0-based 索引使用。col 定位永远差 1，失败后回退 `indexOf`，同一行出现相同中文时命中错误位置。
+
+典型场景：`<el-button @click="form.taskComment = '同意'">同意</el-button>`，`indexOf` 命中 `@click` 里的 `'同意'`，错误替换为 `'{{ $t('flow.agree') }}'`。
+
+**修复**（`template-parser.cjs` 两处）：
+- `getCol()`：`loc.start.column` → `loc.start.column - 1`
+- `extractTemplateLiterals()`：`expLoc.start.column + match.index` → `expLoc.start.column - 1 + match.index`
+
+### 修复 4：多行 `static-attr` 属性值无法替换
+
+**问题**：`replacer.cjs` 逐行处理，`static-attr` 类型用 `indexOf(pattern)` 在单行内匹配。当属性值跨多行时（如 `placeholder="第一行\n第二行"`），单行内找不到完整 pattern，替换被跳过。
+
+**修复**（`replacer.cjs`）：`static-attr` 单行匹配失败且 `chineseText` 含换行时，启用多行匹配：
+1. 在当前行找 `attrName="` 起始位置
+2. 向后扫描找闭合 `"`
+3. 保留首行 `attrName` 之前内容 + 替换文本，清除中间行，保留末行闭合引号之后内容
+
+### 影响范围
+
+| 修复 | template-parser | replacer | init-vue2 | init-vue3 |
+|------|:---:|:---:|:---:|:---:|
+| 移除 @vnet/i18n 生成 | | | ✓ | |
+| index.ts 添加 $t 导出 | | | ✓ | |
+| 列号 1-based → 0-based | ✓ | | | |
+| 多行 static-attr 替换 | | ✓ | | |
+
+template-parser 和 replacer 的修复对 Vue 2 和 Vue 3 **均生效**。
 - `test-full.cjs`

@@ -423,7 +423,7 @@ function getLine(loc, lineOffset) {
  */
 function getCol(loc) {
   if (loc && loc.start && typeof loc.start.column === 'number') {
-    return loc.start.column
+    return loc.start.column - 1
   }
   return 0
 }
@@ -467,7 +467,7 @@ function extractTemplateLiterals(expression, expLoc, line, attrName, element, li
       }
     }
 
-    const templateStartCol = expLoc.start.column + match.index
+    const templateStartCol = expLoc.start.column - 1 + match.index
     const templateEndCol = templateStartCol + match[0].length - 1
 
     quasis.forEach((quasi, idx) => {
