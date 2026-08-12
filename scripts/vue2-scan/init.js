@@ -8,6 +8,110 @@ const fs = require('fs')
 const path = require('path')
 const { loadConfig } = require('./config')
 
+/**
+ * 获取已有 index.ts 中缺失的语言列表
+ * @param {string} filePath - index.ts 路径
+ * @param {string[]} languages - 所有语言代码列表
+ * @returns {string[]} 缺失的语言代码列表
+ */
+function getMissingLangs(filePath, languages) {
+  if (!fs.existsSync(filePath)) return [...languages]
+  const content = fs.readFileSync(filePath, 'utf-8')
+  const langVar = (lang) => lang.replace(/-([a-zA-Z])/g, (_, c) => c.toUpperCase())
+  const missing = []
+  for (const lang of languages) {
+    const varName = langVar(lang)
+    const importPattern = new RegExp(
+      `import\\s+${varName}\\s+from\\s+['"]\\.\\/${lang}\\.json['"]`
+    )
+    if (!importPattern.test(content)) {
+      missing.push(lang)
+    }
+  }
+  return missing
+}
+
+/**
+ * 在已有 index.ts 中补齐缺失语言的注册代码（精确补丁）
+ * @param {string} existingContent - 现有内容
+ * @param {string[]} missingLangs - 缺失的语言代码列表
+ * @returns {string} 补齐后的内容
+ */
+function patchIndex(existingContent, missingLangs) {
+  const langVar = (lang) => lang.replace(/-([a-zA-Z])/g, (_, c) => c.toUpperCase())
+  const elementPath = (lang) => {
+    if (lang === 'zh-CN') return 'zh-CN'
+    return lang.split('-')[0]
+  }
+  const lines = existingContent.split('\n')
+
+  function insertAfterLastMatch(regex, newLine) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (regex.test(lines[i])) {
+        lines.splice(i + 1, 0, newLine)
+        return
+      }
+    }
+  }
+
+  function insertBeforeBlockClosing(openPattern, newLine) {
+    let startIdx = -1
+    for (let i = 0; i < lines.length; i++) {
+      if (openPattern.test(lines[i])) {
+        startIdx = i
+        break
+      }
+    }
+    if (startIdx === -1) return
+
+    let depth = 0
+    let started = false
+    for (let i = startIdx; i < lines.length; i++) {
+      for (const ch of lines[i]) {
+        if (ch === '{') { depth++; started = true }
+        else if (ch === '}') {
+          depth--
+          if (started && depth === 0) {
+            lines.splice(i, 0, newLine)
+            return
+          }
+        }
+      }
+    }
+  }
+
+  for (const lang of missingLangs) {
+    const varName = langVar(lang)
+
+    // 1. 本地 JSON import
+    insertAfterLastMatch(
+      /import \w+ from '\.\/[\w-]+\.json'/,
+      `import ${varName} from './${lang}.json'`
+    )
+
+    // 2. element-ui locale import
+    const elementVar = `element${capitalize(varName)}`
+    insertAfterLastMatch(
+      /import \w+ from 'element-ui\/lib\/locale\/lang\//,
+      `import ${elementVar} from 'element-ui/lib/locale/lang/${elementPath(lang)}'`
+    )
+
+    // 3. elementLocales 条目
+    insertBeforeBlockClosing(
+      /const elementLocales/,
+      `  '${lang}': ${elementVar},`
+    )
+
+    // 4. messages 条目
+    insertBeforeBlockClosing(
+      /messages:\s*\{/,
+      `    '${lang}': ${varName},`
+    )
+  }
+
+  return lines.join('\n')
+}
+
 function main() {
   const args = process.argv.slice(2)
   const configPath = args.includes('-c') ? args[args.indexOf('-c') + 1] : null
@@ -66,14 +170,21 @@ function main() {
     console.log(`\n  已创建 typeToString.ts`)
   }
 
-  // 4. 创建 index.ts
-  const indexExt = fs.existsSync(path.join(outputDir, 'index.ts')) ? '.ts' : ''
+  // 4. 创建/更新 index.ts
   const indexFile = path.join(outputDir, 'index.ts')
-  if (!indexExt && fs.existsSync(indexFile)) {
-    console.log(`\n  已跳过已存在的 index.ts`)
+  const missingLangs = getMissingLangs(indexFile, languages)
+
+  if (missingLangs.length > 0) {
+    if (fs.existsSync(indexFile)) {
+      const existingContent = fs.readFileSync(indexFile, 'utf-8')
+      fs.writeFileSync(indexFile, patchIndex(existingContent, missingLangs), 'utf-8')
+      console.log(`\n  已更新 index.ts（添加 ${missingLangs.join(', ')} 语言注册）`)
+    } else {
+      fs.writeFileSync(indexFile, generateIndex(languages), 'utf-8')
+      console.log(`\n  已创建 index.ts`)
+    }
   } else {
-    fs.writeFileSync(indexFile, generateIndex(languages), 'utf-8')
-    console.log(`\n  已创建 index.ts`)
+    console.log(`\n  已跳过 index.ts（已存在且语言配置完整）`)
   }
 
   console.log(`\n========== 初始化完成 ==========\n`)
@@ -164,28 +275,20 @@ function generateToI18n() {
   return `import i18n from './index'
 import zhCN from './zh-CN.json'
 
-function findKeyByChinese(chineseText: string): string | null {
-  function findKey(obj: any, prefix: string = ''): string | null {
-    for (const key in obj) {
-      if (Object.prototype.hasOwnProperty.call(obj, key)) {
-        const value = obj[key]
-        const fullKey = prefix ? \`\${prefix}.\${key}\` : key
-
-        if (value === chineseText) {
-          return fullKey
-        }
-
-        if (typeof value === 'object' && value !== null) {
-          const result = findKey(value, fullKey)
-          if (result) return result
-        }
+const reverseMap: Record<string, string> = {}
+;(function buildReverseMap(obj: any, prefix: string = '') {
+  for (const key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      const value = obj[key]
+      const fullKey = prefix ? \`\${prefix}.\${key}\` : key
+      if (typeof value === 'string') {
+        reverseMap[value] = fullKey
+      } else if (typeof value === 'object' && value !== null) {
+        buildReverseMap(value, fullKey)
       }
     }
-    return null
   }
-
-  return findKey(zhCN)
-}
+})(zhCN)
 
 /**
  * 单条翻译：通过中文查找语言包中的key并翻译
@@ -197,15 +300,11 @@ export function translateText(chineseText: string): string {
   const locale = i18n.locale as string
   if (locale === 'zh-CN') return chineseText
 
-  const key = findKeyByChinese(chineseText)
+  const key = reverseMap[chineseText]
   if (key) {
     const translated = i18n.t(key)
-    const translatedText = translated !== key ? translated : chineseText
-    console.log(chineseText + '对应的翻译key为：' + key + '，翻译结果为：' + translatedText)
-    return translatedText
+    return translated !== key ? translated : chineseText
   }
-
-  console.log(chineseText + '未找到对应的翻译key，请检查语言包')
 
   return chineseText
 }

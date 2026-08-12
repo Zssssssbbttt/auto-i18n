@@ -82,6 +82,30 @@ const AI_GAP_SYSTEM_PROMPT = `你是一个 i18n 翻译助手。请将给定的�
 只输出填充后的 JSON 对象，不要添加任何其他内容。`
 
 /**
+ * 语言代码 → 中文名称映射
+ */
+function langToName(code) {
+  const map = {
+    'en': '英文',
+    'th': '泰语',
+    'ja': '日语',
+    'ko': '韩语',
+    'vi': '越南语',
+    'ms': '马来语',
+    'id': '印尼语',
+    'fr': '法语',
+    'de': '德语',
+    'es': '西班牙语',
+    'pt': '葡萄牙语',
+    'ru': '俄语',
+    'ar': '阿拉伯语',
+    'zh-CN': '简体中文',
+    'zh-TW': '繁体中文',
+  }
+  return map[code] || code
+}
+
+/**
  * 主入口：扫描 + 去重 + AI 翻译 + 写回
  * @param {object} config - i18n 配置
  * @param {string} projectRoot - 项目根目录
@@ -719,7 +743,8 @@ async function callAiApiForGaps(
   const templateJson = JSON.stringify(template, null, 2)
 
   // 构建 user prompt
-  let userPrompt = `中文原文对照：\n${referenceLines}\n\n请将以下 JSON 中的空字符串替换为对应语言的翻译，只输出填充后的 JSON：\n\n${templateJson}`
+  const langNames = missingLangs.map(langToName).join('、')
+  let userPrompt = `目标语言：${langNames}\n\n中文原文对照：\n${referenceLines}\n\n请将以下 JSON 中的空字符串替换为${langNames}的翻译，只输出填充后的 JSON：\n\n${templateJson}`
 
   if (retryMissingKeys && retryMissingKeys.length > 0) {
     userPrompt += `\n\n注意：上次返回中以下 key 缺失或为空，请务必补全：\n${retryMissingKeys.join(

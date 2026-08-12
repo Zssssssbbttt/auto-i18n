@@ -48,6 +48,28 @@ function langToVarName(lang) {
 }
 
 /**
+ * 获取已有 index.ts 中缺失的语言列表
+ * @param {string} filePath - index.ts 路径
+ * @param {string[]} allLangs - 所有语言代码列表
+ * @returns {string[]} 缺失的语言代码列表
+ */
+function getMissingLangs(filePath, allLangs) {
+  if (!fs.existsSync(filePath)) return [...allLangs]
+  const content = fs.readFileSync(filePath, "utf-8")
+  const missing = []
+  for (const lang of allLangs) {
+    const varName = langToVarName(lang)
+    const importPattern = new RegExp(
+      `import\\s+${varName}\\s+from\\s+['"]\\.\\/${lang}\\.json['"]`
+    )
+    if (!importPattern.test(content)) {
+      missing.push(lang)
+    }
+  }
+  return missing
+}
+
+/**
  * 执行初始化逻辑（可由 index.cjs --all 调用）
  * @param {object} config - i18n 配置
  * @param {string} projectRoot - 项目根目录
@@ -133,19 +155,30 @@ async function runInit(config, projectRoot, options = {}) {
 
   // ========== 生成文件（统一接口调用） ==========
 
-  // 创建 index.ts
+  // 创建/更新 index.ts
   const indexFile = path.join(outputDir, "index.ts");
-  if (!fs.existsSync(indexFile)) {
-    const indexContent = api.generateIndexContent(
-      config,
-      outputDir,
-      projectRoot,
-      validSharedLocales
-    );
-    fs.writeFileSync(indexFile, indexContent, "utf-8");
-    console.log(`  创建: index.ts`);
+  const allLangs = [sourceLang, ...targetLangs.filter((l) => l !== sourceLang)];
+  const missingLangs = getMissingLangs(indexFile, allLangs);
+
+  if (missingLangs.length > 0) {
+    if (fs.existsSync(indexFile)) {
+      // 补齐缺失的语言注册
+      const existingContent = fs.readFileSync(indexFile, "utf-8");
+      const patchedContent = api.patchIndexContent(existingContent, config, missingLangs);
+      fs.writeFileSync(indexFile, patchedContent, "utf-8");
+      console.log(`  更新: index.ts（添加 ${missingLangs.join(', ')} 语言注册）`);
+    } else {
+      const indexContent = api.generateIndexContent(
+        config,
+        outputDir,
+        projectRoot,
+        validSharedLocales
+      );
+      fs.writeFileSync(indexFile, indexContent, "utf-8");
+      console.log(`  创建: index.ts`);
+    }
   } else {
-    console.log(`  跳过: index.ts（已存在）`);
+    console.log(`  跳过: index.ts（已存在且语言配置完整）`);
   }
 
   // 创建 typeToString.ts
@@ -155,6 +188,15 @@ async function runInit(config, projectRoot, options = {}) {
     console.log(`  创建: typeToString.ts`);
   } else {
     console.log(`  跳过: typeToString.ts（已存在）`);
+  }
+
+  // 创建 toI18n.ts
+  const toI18nFile = path.join(outputDir, "toI18n.ts");
+  if (!fs.existsSync(toI18nFile)) {
+    fs.writeFileSync(toI18nFile, api.generateToI18n(), "utf-8");
+    console.log(`  创建: toI18n.ts`);
+  } else {
+    console.log(`  跳过: toI18n.ts（已存在）`);
   }
 
   // 创建 useI18n composable

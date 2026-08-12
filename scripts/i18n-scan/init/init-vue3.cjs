@@ -104,6 +104,7 @@ function deepMerge(target: any, ...sources: any[]): any {
   if (uiLibrary === 'element-plus') {
     return `import { createI18n } from 'vue-i18n'
 import { i18nTypeToString } from './typeToString'
+import { translateText, translateArray } from './toI18n'
 import { ref, watch } from 'vue'
 import { localeContextKey } from 'element-plus'
 ${localImports}
@@ -152,10 +153,14 @@ export function setupI18n(app: any) {
   app.use(i18n)
   app.config.globalProperties.$t = i18n.global.t
   app.config.globalProperties.i18nTypeToString = i18nTypeToString
+  app.config.globalProperties.translateText = translateText
+  app.config.globalProperties.translateArray = translateArray
 }
 `
   } else {
     return `import { createI18n } from 'vue-i18n'
+import { i18nTypeToString } from './typeToString'
+import { translateText, translateArray } from './toI18n'
 ${localImports}
 ${sharedImports}${deepMergeFn}
 const i18n = createI18n({
@@ -174,6 +179,9 @@ export default i18n
 export function setupI18n(app: any) {
   app.use(i18n)
   app.config.globalProperties.$t = i18n.global.t
+  app.config.globalProperties.i18nTypeToString = i18nTypeToString
+  app.config.globalProperties.translateText = translateText
+  app.config.globalProperties.translateArray = translateArray
 }
 `
   }
@@ -392,10 +400,161 @@ function updateMainTs(projectRoot) {
   }
 }
 
+/**
+ * 生成 toI18n.ts 内容（Vue 3 版本，使用 i18n.global.t 和 i18n.global.locale.value）
+ * @returns {string}
+ */
+function generateToI18n() {
+  return `import i18n from './index'
+import zhCN from './zh-CN.json'
+
+const reverseMap: Record<string, string> = {}
+;(function buildReverseMap(obj: any, prefix: string = '') {
+  for (const key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      const value = obj[key]
+      const fullKey = prefix ? \`\${prefix}.\${key}\` : key
+      if (typeof value === 'string') {
+        reverseMap[value] = fullKey
+      } else if (typeof value === 'object' && value !== null) {
+        buildReverseMap(value, fullKey)
+      }
+    }
+  }
+})(zhCN)
+
+/**
+ * 单条翻译：通过中文查找语言包中的key并翻译
+ * 模板中使用：{{ translateText(item.name) }}
+ */
+export function translateText(chineseText: string): string {
+  if (!chineseText) return chineseText
+
+  const locale = i18n.global.locale.value as string
+  if (locale === 'zh-CN') return chineseText
+
+  const key = reverseMap[chineseText]
+  if (key) {
+    const translated = i18n.global.t(key)
+    return translated !== key ? translated : chineseText
+  }
+
+  return chineseText
+}
+
+/**
+ * 批量翻译：遍历数组，翻译每个对象指定 key 的值
+ * 脚本中使用：translateArray(this.viewBtns, 'name')
+ */
+export function translateArray<T extends Record<string, any>>(arr: T[], keyName: string): T[] {
+  if (!arr || !arr.length) return arr
+
+  const locale = i18n.global.locale.value as string
+  if (locale === 'zh-CN') return arr
+
+  return arr.map((item) => {
+    const value = item[keyName]
+    if (typeof value === 'string') {
+      const translated = translateText(value)
+      if (translated !== value) {
+        return { ...item, [keyName]: translated }
+      }
+    }
+    return item
+  })
+}
+`
+}
+
+/**
+ * 在已有 index.ts 中补齐缺失语言的注册代码（精确补丁，不重写整个文件）
+ * @param {string} existingContent - 现有 index.ts 内容
+ * @param {object} config - i18n 配置
+ * @param {string[]} missingLangs - 缺失的语言代码列表
+ * @returns {string} 补齐后的内容
+ */
+function patchIndexContent(existingContent, config, missingLangs) {
+  const uiLibrary = config.uiLibrary || 'element-plus'
+  const hasShared = existingContent.includes('deepMerge(')
+  const lines = existingContent.split('\n')
+
+  // 在 lines 中从后往前找匹配 regex 的行，在其后插入 newLine
+  function insertAfterLastMatch(regex, newLine) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (regex.test(lines[i])) {
+        lines.splice(i + 1, 0, newLine)
+        return
+      }
+    }
+  }
+
+  // 找到 openPattern 匹配行所开启的 {} 块的闭合行，在其前插入 newLine
+  function insertBeforeBlockClosing(openPattern, newLine) {
+    let startIdx = -1
+    for (let i = 0; i < lines.length; i++) {
+      if (openPattern.test(lines[i])) {
+        startIdx = i
+        break
+      }
+    }
+    if (startIdx === -1) return
+
+    let depth = 0
+    let started = false
+    for (let i = startIdx; i < lines.length; i++) {
+      for (const ch of lines[i]) {
+        if (ch === '{') { depth++; started = true }
+        else if (ch === '}') {
+          depth--
+          if (started && depth === 0) {
+            lines.splice(i, 0, newLine)
+            return
+          }
+        }
+      }
+    }
+  }
+
+  for (const lang of missingLangs) {
+    const varName = langToVarName(lang)
+
+    // 1. 本地 JSON import: import th from './th.json'
+    insertAfterLastMatch(
+      /import \w+ from '\.\/[\w-]+\.json'/,
+      `import ${varName} from './${lang}.json'`
+    )
+
+    if (uiLibrary === 'element-plus') {
+      // 2. element-plus locale import: import thElement from 'element-plus/dist/locale/th.mjs'
+      const elementLang = lang.toLowerCase()
+      insertAfterLastMatch(
+        /import \w+ from 'element-plus\/dist\/locale\//,
+        `import ${varName}Element from 'element-plus/dist/locale/${elementLang}.mjs'`
+      )
+
+      // 3. elementLocales 条目: th: thElement,
+      insertBeforeBlockClosing(
+        /const elementLocales/,
+        `  '${lang}': ${varName}Element,`
+      )
+    }
+
+    // 4. messages 条目: 'th': th, 或 'th': deepMerge({}, th),
+    const msgEntry = hasShared
+      ? `    '${lang}': deepMerge({}, ${varName}),`
+      : `    '${lang}': ${varName},`
+    insertBeforeBlockClosing(/messages:\s*\{/, msgEntry)
+  }
+
+  return lines.join('\n')
+}
+
 module.exports = {
   i18nPackageName,
   generateIndexContent,
   generateTypeToString,
   generateUseI18n,
+  generateToI18n,
   updateMainTs,
+  patchIndexContent,
 }
