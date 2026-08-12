@@ -505,6 +505,49 @@ function patchIndexContent(existingContent, config, missingLangs) {
   return lines.join('\n')
 }
 
+/**
+ * 从 index.ts 中移除多余语言的注册代码（只移除注册，不删除语言包文件）
+ * @param {string} existingContent - 现有 index.ts 内容
+ * @param {object} config - i18n 配置
+ * @param {string[]} extraLangs - 需要移除的语言代码列表
+ * @returns {string} 移除后的内容
+ */
+function removeLangFromIndex(existingContent, config, extraLangs) {
+  if (extraLangs.length === 0) return existingContent
+  const uiLibrary = config.uiLibrary || 'element-ui'
+  let lines = existingContent.split('\n')
+
+  for (const lang of extraLangs) {
+    const varName = langToVarName(lang)
+
+    // 1. 移除 messages 和 elementLocales 中的条目（格式均为 'th': xxx,）
+    lines = lines.filter((line) => {
+      return !line.trim().startsWith(`'${lang}':`)
+    })
+
+    // 2. 移除 element-ui locale import
+    if (uiLibrary === 'element-ui') {
+      const elementPath = lang === 'zh-CN' ? 'zh-CN' : lang.split('-')[0]
+      lines = lines.filter((line) => {
+        const pattern = new RegExp(
+          `import\\s+\\w+\\s+from\\s+['"]element-ui\\/lib\\/locale\\/lang\\/${elementPath}['"]`
+        )
+        return !pattern.test(line)
+      })
+    }
+
+    // 3. 移除本地 JSON import
+    lines = lines.filter((line) => {
+      const pattern = new RegExp(
+        `import\\s+${varName}\\s+from\\s+['"]\\.\\/${lang}\\.json['"]`
+      )
+      return !pattern.test(line)
+    })
+  }
+
+  return lines.join('\n')
+}
+
 module.exports = {
   i18nPackageName,
   generateIndexContent,
@@ -513,4 +556,5 @@ module.exports = {
   generateToI18n,
   updateMainTs,
   patchIndexContent,
+  removeLangFromIndex,
 }

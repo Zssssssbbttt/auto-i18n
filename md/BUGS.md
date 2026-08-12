@@ -2,6 +2,14 @@
 
 ## 2026-08-12
 
+### translator: AI 翻译空值时导致语言包 key 数量不一致
+
+- **现象**：AI 对某条中文返回了 key，但某个目标语言（如泰语）的翻译为空字符串，导致 `zh-CN.json` 写入了该 key，而 `th.json` 没有写入，三个语言包 key 数量对不上
+- **根因**：写回逻辑（`translator.cjs` 中 `translateViaAI` 的 Step 4）对源语言无条件写入 `sourceData[module][shortKey] = chineseText`，但对目标语言有 `if (translation)` 条件判断，翻译为空时跳过
+- **影响**：项目自身语言包无 key 数量校验（`validateLocalePaths` 仅用于 shared/reference），不一致不会被发现，但会导致目标语言 `$t()` 显示 key 名而非翻译
+- **缓解**：下次运行 `--translate` 时 `findTranslationGaps` 会检测到该缺口并补齐，靠二次运行自愈
+- **状态**：已识别，未修复（待商定是否在写回后增加 key 数量一致性校验）
+
 ### translator: 缺口翻译 prompt 未明确指定目标语言
 
 - **现象**：新增语言（如泰语）后运行 `--translate`，缺口补齐（Step 3b）生成的翻译大量缺失，且已有条目值为英文而非目标语言

@@ -70,6 +70,28 @@ function getMissingLangs(filePath, allLangs) {
 }
 
 /**
+ * 获取已有 index.ts 中多余的语言（注册了但不在配置中）
+ * @param {string} filePath - index.ts 路径
+ * @param {string[]} allLangs - 配置中的所有语言（含源语言）
+ * @returns {string[]} 多余的语言代码列表
+ */
+function getExtraLangs(filePath, allLangs) {
+  if (!fs.existsSync(filePath)) return []
+  const content = fs.readFileSync(filePath, "utf-8")
+  const extra = []
+  // 匹配所有 import xx from './xx.json'，提取语言代码
+  const importRe = /import\s+\w+\s+from\s+['"]\.\/([\w-]+)\.json['"]/g
+  let match
+  while ((match = importRe.exec(content)) !== null) {
+    const lang = match[1]
+    if (!allLangs.includes(lang) && !extra.includes(lang)) {
+      extra.push(lang)
+    }
+  }
+  return extra
+}
+
+/**
  * 执行初始化逻辑（可由 index.cjs --all 调用）
  * @param {object} config - i18n 配置
  * @param {string} projectRoot - 项目根目录
@@ -163,9 +185,9 @@ async function runInit(config, projectRoot, options = {}) {
   if (missingLangs.length > 0) {
     if (fs.existsSync(indexFile)) {
       // 补齐缺失的语言注册
-      const existingContent = fs.readFileSync(indexFile, "utf-8");
-      const patchedContent = api.patchIndexContent(existingContent, config, missingLangs);
-      fs.writeFileSync(indexFile, patchedContent, "utf-8");
+      let existingContent = fs.readFileSync(indexFile, "utf-8");
+      existingContent = api.patchIndexContent(existingContent, config, missingLangs);
+      fs.writeFileSync(indexFile, existingContent, "utf-8");
       console.log(`  更新: index.ts（添加 ${missingLangs.join(', ')} 语言注册）`);
     } else {
       const indexContent = api.generateIndexContent(
@@ -179,6 +201,17 @@ async function runInit(config, projectRoot, options = {}) {
     }
   } else {
     console.log(`  跳过: index.ts（已存在且语言配置完整）`);
+  }
+
+  // 清理多余的语言注册（注册了但不在配置中）
+  if (fs.existsSync(indexFile)) {
+    const extraLangs = getExtraLangs(indexFile, allLangs);
+    if (extraLangs.length > 0) {
+      let existingContent = fs.readFileSync(indexFile, "utf-8");
+      existingContent = api.removeLangFromIndex(existingContent, config, extraLangs);
+      fs.writeFileSync(indexFile, existingContent, "utf-8");
+      console.log(`  更新: index.ts（移除 ${extraLangs.join(', ')} 语言注册）`);
+    }
   }
 
   // 创建 typeToString.ts

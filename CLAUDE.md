@@ -53,9 +53,10 @@ scripts/i18n-scan/
    - `"element-plus"` → 完整模板：含 Element Plus locale 集成、语言切换同步（watch + install 拦截）
    - `"vant"` 或 `"none"` → 精简模板：仅 vue-i18n 核心配置，无 UI 库耦合
    - 有共享包时生成 `deepMerge` 工具函数，messages 使用深度合并（共享包在前，项目包覆盖在后）
-4. 创建语言包空文件（zh-CN.json / en.json 等）
-5. 生成 `typeToString.ts`（TS 类型转换辅助）和 `useI18n.ts`（composable）
-6. 更新 `main.ts`：补全 i18n 引入、全局 `$t` 注册、`@vnet/i18n` 注册（`getComponentMessages` + `mergeLocaleMessage` + `setI18nInstance`）、`app.use(i18n)`
+4. 创建语言包空文件（zh-CN.json / en.json 等），已存在则跳过不覆盖
+5. 检测 `index.ts` 中的语言注册：缺失的自动补齐（`patchIndexContent`），多余的（已从配置中移除）自动清理注册（`removeLangFromIndex`），不删除语言包 JSON 文件
+6. 生成 `typeToString.ts`（TS 类型转换辅助）、`useI18n.ts`（composable）、`toI18n.ts`（运行时反向映射辅助）
+7. 更新 `main.ts`：补全 i18n 引入、全局 `$t` 注册、`@vnet/i18n` 注册（`getComponentMessages` + `mergeLocaleMessage` + `setI18nInstance`）、`app.use(i18n)`
 
 ### 扫描流程
 1. 加载 `i18n.config.js` 配置
