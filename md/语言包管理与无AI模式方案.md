@@ -7,13 +7,13 @@
 
 ### 1. 新增语言的自动注册（已支持）
 
-第二次执行脚本新增语言（如泰语）时，`init.cjs` 会通过 `getMissingLangs` + `patchIndexContent` 自动在 `index.ts` 中补齐该语言的 import、messages 条目、Element UI/Plus locale 注册。
+第二次执行脚本新增语言（如泰语）时，`init.cjs` 会根据配置中的 `sourceLanguage` + `targetLanguages` **完整重建** `index.ts`，遍历所有配置语言生成 import、messages 条目、Element UI/Plus locale 注册。
+
+> **2026-08-13 重构**：原先使用 `getMissingLangs` + `patchIndexContent` 的补丁方式，在文件结构中用正则查找插入位置，结构稍有变化就容易静默失败（如新增泰语未注册到 index.ts）。现已改为每次 init 直接调用 `generateIndexContent` 完整重建，配置里有什么语言就注册什么语言，简单可靠。
 
 ### 2. 移除语言的自动清理（已实现）
 
-从 `targetLanguages` 中删除某语言后，`init.cjs` 会通过 `getExtraLangs` + `removeLangFromIndex` 自动移除 `index.ts` 中该语言的注册。
-
-**关键约束：只移除注册，不删除语言包 JSON 文件**，防止用户误删配置导致语言包文件丢失。
+从 `targetLanguages` 中删除某语言后，下次 init 重建 `index.ts` 时自然不会再生成该语言的注册，同时**不删除语言包 JSON 文件**，防止用户误删配置导致语言包文件丢失。
 
 ### 3. 手动放置但未配置的语言包（不处理）
 
@@ -102,8 +102,70 @@ AI 的缺口补齐机制**天然支持「先有 key、后翻译」**：已有 ke
 
 | 文件 | 改动 |
 |------|------|
-| `init.cjs` | 新增 `getExtraLangs`，`runInit` 中调用 `removeLangFromIndex` 清理多余语言注册 |
-| `init/init-vue2.cjs` | 新增 `removeLangFromIndex` |
-| `init/init-vue3.cjs` | 新增 `removeLangFromIndex` |
-| `md/i18n脚本使用指南.md` | 「添加新语言」扩展为「管理语言」，新增「移除语言」说明 |
-| `CLAUDE.md` | 初始化流程补充补齐/清理语言注册的双向行为 |
+| `init.cjs` | 移除 `getMissingLangs`、`getExtraLangs`、`langToVarName`；`runInit` 中 index.ts 生成改为每次完整重建 |
+| `init/init-vue2.cjs` | 移除 `patchIndexContent`、`removeLangFromIndex` |
+| `init/init-vue3.cjs` | 移除 `patchIndexContent`、`removeLangFromIndex` |
+| `CLAUDE.md` | 初始化流程更新为完整重建方式 |
+
+> **2026-08-13 重构原因**：补丁方案（`patchIndexContent` / `removeLangFromIndex`）靠正则在文件中查找插入/删除位置，文件结构稍有变化就容易静默失败。实际案例：配置中同时有日语和泰语，日语注册成功但泰语未注册。改为完整重建后，`generateIndexContent` 遍历所有配置语言一次性生成，不会遗漏。
+
+---
+
+## 六、2026-08-13 Vue 2/3 对齐与配置优化
+
+### 背景
+
+全面审查脚本代码后，发现 Vue 2 和 Vue 3 之间存在多项不对齐问题，以及部分配置项未生效。
+
+### 已修复的问题
+
+#### 1. Vue 3 Element Plus locale 硬编码（P0）
+
+**问题**：`init-vue3.cjs` 的 `generateIndexContent` 中 Element Plus locale 只硬编码了 `zh-CN` 和 `en` 两个语言。配置了 `targetLanguages: ["en","th","ja"]` 时，切换到泰语或日语后 Element Plus 组件不会切换语言。
+
+**修复**：改为动态遍历 `allLangs` 生成所有语言的 Element Plus locale import 和注册，与 Vue 2 的 Element UI 行为一致。
+
+#### 2. translateMethods 默认值不区分 Vue 版本和 UI 库（P1）
+
+**问题**：`normalizeConfig` 中 `translateMethods` 默认值硬编码为 Element Plus 的白名单（`ElMessage.*` 等），Vue 2 项目也会拿到错误的默认值。
+
+**修复**：新增 `getDefaultTranslateMethods(vueVersion, uiLibrary)` 函数：
+- Vue 3 按 UI 库区分：element-plus / vant / none
+- Vue 2 统一使用 `this.$message.*` 等实例方法，不区分 UI 库
+
+#### 3. baseDir 配置项未生效（P1）
+
+**问题**：`i18n.config.js` 中定义了 `baseDir` 但脚本从未读取使用。
+
+**修复**：`normalizeConfig` 中实现 baseDir 解析逻辑：
+- 支持字符串（`"src"`）或数组（`["src/views", "src/components"]`）
+- 自动拼接 `entry` 扫描路径：`baseDir + "/" + pattern`
+- 若 entry 已包含 baseDir 前缀或以 `./`、`../` 开头，不重复拼接
+- 默认值 `"src"`
+
+#### 4. keyStyle 配置项移除
+
+**问题**：`keyStyle` 在交互向导中展示但代码中从未使用，AI 翻译 prompt 硬编码了 camelCase。
+
+**修复**：从 `setup.cjs` 中移除 `KEY_STYLE_OPTIONS`、ADVANCED_ITEMS 中的 keyStyle 项、`writeConfig` 输出和 `printSummary` 引用。
+
+#### 5. Vue 2 不需要 @vnet/i18n 注册
+
+**确认**：Vue 2 项目没有公共组件（FlowProcess 等），不需要 `getComponentMessages` + `mergeLocaleMessage` + `setI18nInstance` 注册逻辑。仅 Vue 3 的 `updateMainTs` 执行此注入。
+
+### 代码改动清单
+
+| 文件 | 改动 |
+|------|------|
+| `init/init-vue3.cjs` | `generateIndexContent` 中 Element Plus locale 改为动态遍历 `allLangs` 生成 |
+| `index.cjs` | 新增 `getDefaultTranslateMethods()`；`normalizeConfig` 中实现 `baseDir` 解析 |
+| `setup.cjs` | 移除 `KEY_STYLE_OPTIONS`、keyStyle 配置项及相关引用 |
+| `CLAUDE.md` | 更新初始化流程、`translateMethods` 默认值、`baseDir` 说明 |
+
+### 确认不处理
+
+| 项目 | 原因 |
+|------|------|
+| Vue 2 添加 @vnet/i18n 注册 | Vue 2 无公共组件，不需要 |
+| tsx/jsx 文件扫描 | Vue 项目暂不需要 |
+| `appendNewKeys` 死代码 | 不影响功能，后续清理 |

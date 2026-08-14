@@ -33,10 +33,14 @@ function parseVueFile(filePath, source, config) {
     return { results: allResults, errors }
   }
 
-  // 检查是否有解析错误
+  // 检查是否有解析错误（compiler-sfc 可能对同一错误重复上报，去重）
   if (sfc.errors && sfc.errors.length > 0) {
+    const seen = new Set()
     sfc.errors.forEach((err) => {
-      errors.push(`SFC 错误: ${err.message}`)
+      const msg = `SFC 错误: ${err.message}`
+      if (seen.has(msg)) return
+      seen.add(msg)
+      errors.push(msg)
     })
   }
 

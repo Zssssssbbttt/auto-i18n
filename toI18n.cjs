@@ -1,6 +1,6 @@
 // toI18n.cjs — Vue 3 i18n 自动扫描脚本
 // 用法: node toI18n.cjs
-// 生成时间: 2026-08-12T08:45:34.009Z
+// 生成时间: 2026-08-14T09:47:32.565Z
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __glob = (map) => (path2) => {
@@ -344,75 +344,13 @@ export function translateArray<T extends Record<string, any>>(arr: T[], keyName:
 }
 `;
     }
-    function patchIndexContent(existingContent, config, missingLangs) {
-      const uiLibrary = config.uiLibrary || "element-ui";
-      const hasShared = existingContent.includes("deepMerge(");
-      const lines = existingContent.split("\n");
-      function insertAfterLastMatch(regex, newLine) {
-        for (let i = lines.length - 1; i >= 0; i--) {
-          if (regex.test(lines[i])) {
-            lines.splice(i + 1, 0, newLine);
-            return;
-          }
-        }
-      }
-      function insertBeforeBlockClosing(openPattern, newLine) {
-        let startIdx = -1;
-        for (let i = 0; i < lines.length; i++) {
-          if (openPattern.test(lines[i])) {
-            startIdx = i;
-            break;
-          }
-        }
-        if (startIdx === -1) return;
-        let depth = 0;
-        let started = false;
-        for (let i = startIdx; i < lines.length; i++) {
-          for (const ch of lines[i]) {
-            if (ch === "{") {
-              depth++;
-              started = true;
-            } else if (ch === "}") {
-              depth--;
-              if (started && depth === 0) {
-                lines.splice(i, 0, newLine);
-                return;
-              }
-            }
-          }
-        }
-      }
-      for (const lang of missingLangs) {
-        const varName = langToVarName(lang);
-        insertAfterLastMatch(
-          /import \w+ from '\.\/[\w-]+\.json'/,
-          `import ${varName} from './${lang}.json'`
-        );
-        if (uiLibrary === "element-ui") {
-          const elementPath = lang === "zh-CN" ? "zh-CN" : lang.split("-")[0];
-          const elementVar = `element${capitalize(varName)}`;
-          insertAfterLastMatch(
-            /import \w+ from 'element-ui\/lib\/locale\/lang\//,
-            `import ${elementVar} from 'element-ui/lib/locale/lang/${elementPath}'`
-          );
-          insertBeforeBlockClosing(
-            /const elementLocales/,
-            `  '${lang}': ${elementVar},`
-          );
-        }
-        const msgEntry = hasShared ? `    '${lang}': deepMerge({}, ${varName}),` : `    '${lang}': ${varName},`;
-        insertBeforeBlockClosing(/messages:\s*\{/, msgEntry);
-      }
-      return lines.join("\n");
-    }
     module2.exports = {
       i18nPackageName,
       generateIndexContent,
       generateTypeToString,
       generateUseI18n,
       generateToI18n,
-      updateMainTs,
-      patchIndexContent
+      updateMainTs
     };
   }
 });
@@ -478,27 +416,28 @@ function deepMerge(target: any, ...sources: any[]): any {
       }).join("\n");
       const localImports = allLangs.map((lang) => `import ${langToVarName(lang)} from './${lang}.json'`).join("\n");
       if (uiLibrary === "element-plus") {
+        const elementImports = allLangs.map((l) => `import ${langToVarName(l)}Element from 'element-plus/dist/locale/${l.toLowerCase()}.mjs'`).join("\n");
+        const elementEntries = allLangs.map((l) => `  '${l}': ${langToVarName(l)}Element,`).join("\n");
+        const defaultLocale = sourceLang;
         return `import { createI18n } from 'vue-i18n'
 import { i18nTypeToString } from './typeToString'
 import { translateText, translateArray } from './toI18n'
 import { ref, watch } from 'vue'
 import { localeContextKey } from 'element-plus'
 ${localImports}
-${sharedImports}import zhCNElement from 'element-plus/dist/locale/zh-cn.mjs'
-import enElement from 'element-plus/dist/locale/en.mjs'${deepMergeFn}
+${sharedImports}${elementImports}${deepMergeFn}
 const elementLocales: Record<string, any> = {
-  'zh-CN': zhCNElement,
-  en: enElement,
+${elementEntries}
 }
 
 const currentElementLocale = ref(
-  elementLocales[localStorage.getItem('${storageKey}') || 'zh-CN'] ||
-    elementLocales['zh-CN']
+  elementLocales[localStorage.getItem('${storageKey}') || '${defaultLocale}'] ||
+    elementLocales['${defaultLocale}']
 )
 
 const i18n = createI18n({
   legacy: false,
-  locale: localStorage.getItem('${storageKey}') || 'zh-CN',
+  locale: localStorage.getItem('${storageKey}') || '${defaultLocale}',
   messages: {
 ${messagesLines}
   },
@@ -509,7 +448,7 @@ watch(
   () => i18n.global.locale.value,
   (newLocale) => {
     currentElementLocale.value =
-      elementLocales[newLocale] || elementLocales['zh-CN']
+      elementLocales[newLocale] || elementLocales['${defaultLocale}']
   }
 )
 
@@ -643,20 +582,21 @@ export function useI18n() {
         let inserted = false;
         for (let i = 0; i < lines.length; i++) {
           if (/^\s*(?:const\s+)?app\s*=\s*createApp/.test(lines[i].trim())) {
+            const indent = lines[i].match(/^\s*/)[0];
             lines.splice(
               i + 1,
               0,
               "",
-              `// \u5168\u5C40\u6CE8\u518C $t\uFF0C\u6A21\u677F\u4E2D\u53EF\u76F4\u63A5\u4F7F\u7528`,
-              globalTLine,
+              `${indent}// \u5168\u5C40\u6CE8\u518C $t\uFF0C\u6A21\u677F\u4E2D\u53EF\u76F4\u63A5\u4F7F\u7528`,
+              `${indent}${globalTLine}`,
               "",
-              `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
-              `// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
-              `const compMsgs = getComponentMessages()`,
-              `for (const locale of Object.keys(compMsgs)) {`,
-              `  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
-              `}`,
-              `setI18nInstance(i18n)`
+              `${indent}// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
+              `${indent}// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
+              `${indent}const compMsgs = getComponentMessages()`,
+              `${indent}for (const locale of Object.keys(compMsgs)) {`,
+              `${indent}  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
+              `${indent}}`,
+              `${indent}setI18nInstance(i18n)`
             );
             content = lines.join("\n");
             console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0\u5168\u5C40 $t \u6CE8\u518C\u53CA @vnet/i18n \u6CE8\u518C");
@@ -675,17 +615,18 @@ export function useI18n() {
           let inserted = false;
           for (let i = 0; i < lines.length; i++) {
             if (lines[i].trim() === globalTLine) {
+              const indent = lines[i].match(/^\s*/)[0];
               lines.splice(
                 i + 1,
                 0,
                 "",
-                `// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
-                `// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
-                `const compMsgs = getComponentMessages()`,
-                `for (const locale of Object.keys(compMsgs)) {`,
-                `  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
-                `}`,
-                `setI18nInstance(i18n)`
+                `${indent}// \u5C06\u516C\u5171\u7EC4\u4EF6\u8BCD\u6761\u5408\u5E76\u5230\u5F53\u524D i18n \u5B9E\u4F8B\uFF0C\u5E76\u6CE8\u518C\u5230 @vnet/i18n\uFF0C`,
+                `${indent}// \u4F7F FlowProcess \u7B49\u516C\u5171\u7EC4\u4EF6\u80FD\u968F\u9879\u76EE\u8BED\u8A00\u5207\u6362`,
+                `${indent}const compMsgs = getComponentMessages()`,
+                `${indent}for (const locale of Object.keys(compMsgs)) {`,
+                `${indent}  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
+                `${indent}}`,
+                `${indent}setI18nInstance(i18n)`
               );
               content = lines.join("\n");
               console.log("  \u65B0\u589E: main.ts \u6DFB\u52A0 @vnet/i18n \u6CE8\u518C\u4EE3\u7801");
@@ -712,8 +653,22 @@ export function useI18n() {
           if (mountIdx === -1) continue;
           const beforeMount = line.slice(0, mountIdx).trimEnd();
           if (!beforeMount) {
-            const indent = line.slice(0, line.length - line.trimStart().length);
-            lines.splice(i, 0, `${indent}.use(i18n)`);
+            const mountIndent = line.slice(0, line.length - line.trimStart().length);
+            let chainIndent = null;
+            for (let j = i - 1; j >= 0; j--) {
+              const prev = lines[j];
+              if (!prev.trim()) continue;
+              const prevIndent = prev.slice(0, prev.length - prev.trimStart().length);
+              if (prev.trimStart().startsWith(".")) {
+                chainIndent = prevIndent;
+                break;
+              }
+              if (prevIndent.length < mountIndent.length) {
+                chainIndent = prevIndent + "  ";
+                break;
+              }
+            }
+            lines.splice(i, 0, `${chainIndent !== null ? chainIndent : mountIndent}.use(i18n)`);
           } else if (beforeMount.endsWith(")")) {
             lines[i] = beforeMount + ".use(i18n)" + line.slice(mountIdx);
           } else {
@@ -798,74 +753,13 @@ export function translateArray<T extends Record<string, any>>(arr: T[], keyName:
 }
 `;
     }
-    function patchIndexContent(existingContent, config, missingLangs) {
-      const uiLibrary = config.uiLibrary || "element-plus";
-      const hasShared = existingContent.includes("deepMerge(");
-      const lines = existingContent.split("\n");
-      function insertAfterLastMatch(regex, newLine) {
-        for (let i = lines.length - 1; i >= 0; i--) {
-          if (regex.test(lines[i])) {
-            lines.splice(i + 1, 0, newLine);
-            return;
-          }
-        }
-      }
-      function insertBeforeBlockClosing(openPattern, newLine) {
-        let startIdx = -1;
-        for (let i = 0; i < lines.length; i++) {
-          if (openPattern.test(lines[i])) {
-            startIdx = i;
-            break;
-          }
-        }
-        if (startIdx === -1) return;
-        let depth = 0;
-        let started = false;
-        for (let i = startIdx; i < lines.length; i++) {
-          for (const ch of lines[i]) {
-            if (ch === "{") {
-              depth++;
-              started = true;
-            } else if (ch === "}") {
-              depth--;
-              if (started && depth === 0) {
-                lines.splice(i, 0, newLine);
-                return;
-              }
-            }
-          }
-        }
-      }
-      for (const lang of missingLangs) {
-        const varName = langToVarName(lang);
-        insertAfterLastMatch(
-          /import \w+ from '\.\/[\w-]+\.json'/,
-          `import ${varName} from './${lang}.json'`
-        );
-        if (uiLibrary === "element-plus") {
-          const elementLang = lang.toLowerCase();
-          insertAfterLastMatch(
-            /import \w+ from 'element-plus\/dist\/locale\//,
-            `import ${varName}Element from 'element-plus/dist/locale/${elementLang}.mjs'`
-          );
-          insertBeforeBlockClosing(
-            /const elementLocales/,
-            `  '${lang}': ${varName}Element,`
-          );
-        }
-        const msgEntry = hasShared ? `    '${lang}': deepMerge({}, ${varName}),` : `    '${lang}': ${varName},`;
-        insertBeforeBlockClosing(/messages:\s*\{/, msgEntry);
-      }
-      return lines.join("\n");
-    }
     module2.exports = {
       i18nPackageName,
       generateIndexContent,
       generateTypeToString,
       generateUseI18n,
       generateToI18n,
-      updateMainTs,
-      patchIndexContent
+      updateMainTs
     };
   }
 });
@@ -89858,8 +89752,12 @@ var require_vue_sfc_parser = __commonJS({
         return { results: allResults, errors };
       }
       if (sfc.errors && sfc.errors.length > 0) {
+        const seen = /* @__PURE__ */ new Set();
         sfc.errors.forEach((err) => {
-          errors.push(`SFC \u9519\u8BEF: ${err.message}`);
+          const msg = `SFC \u9519\u8BEF: ${err.message}`;
+          if (seen.has(msg)) return;
+          seen.add(msg);
+          errors.push(msg);
         });
       }
       if (sfc.descriptor.template) {
@@ -90133,18 +90031,24 @@ var require_replacer = __commonJS({
           if (!replacement) continue;
           let start, end;
           if (item.type === "static-attr") {
-            const pattern = `${item.attrName}="${item.chineseText}"`;
-            const idx = line.indexOf(pattern);
+            let pattern = `${item.attrName}="${item.chineseText}"`;
+            let idx = line.indexOf(pattern);
+            if (idx === -1) {
+              pattern = `${item.attrName}='${item.chineseText}'`;
+              idx = line.indexOf(pattern);
+            }
             if (idx === -1) {
               if (item.chineseText.includes("\n")) {
-                const startPattern = `${item.attrName}="`;
-                const startIdx = line.indexOf(startPattern);
-                if (startIdx !== -1) {
+                const startPatterns = [`${item.attrName}="`, `${item.attrName}='`];
+                const found = startPatterns.map((p) => ({ p, i: line.indexOf(p) })).filter((x) => x.i >= 0).sort((a, b) => a.i - b.i)[0];
+                if (found) {
+                  const startIdx = found.i;
+                  const quote = found.p.endsWith('"') ? '"' : "'";
                   let endLineIdx = lineIdx;
                   let endCol = -1;
                   for (let j = lineIdx; j < lines.length; j++) {
-                    const searchFrom = j === lineIdx ? startIdx + startPattern.length : 0;
-                    const endIdx = lines[j].indexOf('"', searchFrom);
+                    const searchFrom = j === lineIdx ? startIdx + found.p.length : 0;
+                    const endIdx = lines[j].indexOf(quote, searchFrom);
                     if (endIdx !== -1) {
                       endLineIdx = j;
                       endCol = endIdx;
@@ -91073,6 +90977,7 @@ ${retryMissingKeys.join(
 // scripts/i18n-scan/utils/logger.cjs
 var require_logger = __commonJS({
   "scripts/i18n-scan/utils/logger.cjs"(exports2, module2) {
+    var path2 = require("path");
     function printSeparator2(title, width = 60) {
       if (title) {
         const len = title.length;
@@ -91087,7 +90992,16 @@ var require_logger = __commonJS({
       console.log("");
       printSeparator2(`  ${filePath}  `);
     }
-    module2.exports = { printSeparator: printSeparator2, printFileHeader: printFileHeader2 };
+    function printParseErrors2(errors, projectRoot) {
+      if (!errors || errors.length === 0) return;
+      console.log("");
+      printSeparator2("\u89E3\u6790\u5931\u8D25\uFF08\u672A\u626B\u63CF\uFF09");
+      for (const err of errors) {
+        const relPath = err.file ? path2.relative(projectRoot, err.file).replace(/\\/g, "/") : "";
+        console.log(`  ${relPath ? relPath + " \u2014 " : ""}${err.message}`);
+      }
+    }
+    module2.exports = { printSeparator: printSeparator2, printFileHeader: printFileHeader2, printParseErrors: printParseErrors2 };
   }
 });
 
@@ -91121,25 +91035,6 @@ var require_init = __commonJS({
         console.error(err.message);
         process.exit(1);
       }
-    }
-    function langToVarName(lang) {
-      const parts = lang.split("-");
-      return parts[0].toLowerCase() + parts.slice(1).map((p) => p[0].toUpperCase() + p.slice(1)).join("");
-    }
-    function getMissingLangs(filePath, allLangs) {
-      if (!fs2.existsSync(filePath)) return [...allLangs];
-      const content = fs2.readFileSync(filePath, "utf-8");
-      const missing = [];
-      for (const lang of allLangs) {
-        const varName = langToVarName(lang);
-        const importPattern = new RegExp(
-          `import\\s+${varName}\\s+from\\s+['"]\\.\\/${lang}\\.json['"]`
-        );
-        if (!importPattern.test(content)) {
-          missing.push(lang);
-        }
-      }
-      return missing;
     }
     async function runInit2(config, projectRoot, options = {}) {
       const { interactive = false, confirmFn = null } = options;
@@ -91202,27 +91097,15 @@ var require_init = __commonJS({
       const vueVersion = config.vueVersion || 3;
       const api = globRequire_init_init_vue_cjs2(`./init/init-vue${vueVersion}.cjs`);
       const indexFile = path2.join(outputDir, "index.ts");
-      const allLangs = [sourceLang, ...targetLangs.filter((l) => l !== sourceLang)];
-      const missingLangs = getMissingLangs(indexFile, allLangs);
-      if (missingLangs.length > 0) {
-        if (fs2.existsSync(indexFile)) {
-          const existingContent = fs2.readFileSync(indexFile, "utf-8");
-          const patchedContent = api.patchIndexContent(existingContent, config, missingLangs);
-          fs2.writeFileSync(indexFile, patchedContent, "utf-8");
-          console.log(`  \u66F4\u65B0: index.ts\uFF08\u6DFB\u52A0 ${missingLangs.join(", ")} \u8BED\u8A00\u6CE8\u518C\uFF09`);
-        } else {
-          const indexContent = api.generateIndexContent(
-            config,
-            outputDir,
-            projectRoot,
-            validSharedLocales
-          );
-          fs2.writeFileSync(indexFile, indexContent, "utf-8");
-          console.log(`  \u521B\u5EFA: index.ts`);
-        }
-      } else {
-        console.log(`  \u8DF3\u8FC7: index.ts\uFF08\u5DF2\u5B58\u5728\u4E14\u8BED\u8A00\u914D\u7F6E\u5B8C\u6574\uFF09`);
-      }
+      const indexContent = api.generateIndexContent(
+        config,
+        outputDir,
+        projectRoot,
+        validSharedLocales
+      );
+      const indexExists = fs2.existsSync(indexFile);
+      fs2.writeFileSync(indexFile, indexContent, "utf-8");
+      console.log(`  ${indexExists ? "\u66F4\u65B0" : "\u521B\u5EFA"}: index.ts`);
       const typeToStringFile = path2.join(outputDir, "typeToString.ts");
       if (!fs2.existsSync(typeToStringFile)) {
         fs2.writeFileSync(typeToStringFile, api.generateTypeToString(), "utf-8");
@@ -91777,11 +91660,6 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       { value: "vant", label: "Vant" },
       { value: "none", label: "\u65E0\u7EC4\u4EF6\u5E93" }
     ];
-    var KEY_STYLE_OPTIONS = [
-      { value: "camelCase", label: "camelCase\uFF08\u5C0F\u9A7C\u5CF0\uFF09" },
-      { value: "snake_case", label: "snake_case\uFF08\u86C7\u5F62\uFF09" },
-      { value: "kebab-case", label: "kebab-case\uFF08\u77ED\u6A2A\u7EBF\uFF09" }
-    ];
     var AI_MODEL_OPTIONS = [
       { value: "gpt-4o", label: "gpt-4o \u2014 OpenAI \u6700\u65B0\u591A\u6A21\u6001" },
       { value: "gpt-4", label: "gpt-4 \u2014 OpenAI GPT-4" },
@@ -91915,14 +91793,6 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
         description: "\u8BED\u8A00\u5305\u6587\u4EF6\u8F93\u51FA\u76EE\u5F55",
         type: "input",
         default: "src/locales"
-      },
-      {
-        key: "keyStyle",
-        title: "Key \u547D\u540D\u98CE\u683C",
-        description: "\u751F\u6210 key \u7684\u547D\u540D\u98CE\u683C",
-        type: "select",
-        options: KEY_STYLE_OPTIONS,
-        default: "camelCase"
       },
       {
         key: "logDir",
@@ -92115,9 +91985,6 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       lines.push("");
       lines.push("  // \u9700\u8981\u7FFB\u8BD1\u7684\u65B9\u6CD5\u8C03\u7528\uFF08\u767D\u540D\u5355\uFF0C\u652F\u6301\u901A\u914D\u7B26\u5982 ElMessage.*\uFF09");
       lines.push(`  translateMethods: ${JSON.stringify(nested.translateMethods)},`);
-      lines.push("");
-      lines.push("  // key \u547D\u540D\u98CE\u683C");
-      lines.push(`  keyStyle: ${JSON.stringify(nested.keyStyle || "camelCase")},`);
       lines.push("");
       lines.push("  // \u65E5\u5FD7\u76EE\u5F55");
       lines.push(`  logDir: ${JSON.stringify(nested.logDir || "logs")},`);
@@ -92380,7 +92247,6 @@ ${gray("  \u2191\u2193 \u79FB\u52A8  Space \u9009\u4E2D/\u53D6\u6D88  Enter \u78
       }
       rows.push(
         ["\u8F93\u51FA\u76EE\u5F55", config.output],
-        ["Key \u98CE\u683C", config.keyStyle],
         ["\u65E5\u5FD7\u76EE\u5F55", config.logDir]
       );
       for (const [label, value] of rows) {
@@ -92414,7 +92280,7 @@ var {
 var { lookupKey } = require_key_generator();
 var { replaceInFile } = require_replacer();
 var { translateViaAI } = require_translator();
-var { printSeparator, printFileHeader } = require_logger();
+var { printSeparator, printFileHeader, printParseErrors } = require_logger();
 var { runInit } = require_init();
 var SCRIPT_DIR = __dirname;
 function confirm(question, defaultYes = true) {
@@ -92492,15 +92358,53 @@ function detectVueVersion(config) {
   }
   return 3;
 }
+function getDefaultTranslateMethods(vueVersion, uiLibrary) {
+  if (vueVersion === 2) {
+    return [
+      "this.$message.*",
+      "this.$confirm",
+      "this.$alert",
+      "this.$prompt",
+      "this.$notify.*"
+    ];
+  }
+  if (uiLibrary === "element-plus") {
+    return [
+      "ElMessage.*",
+      "ElMessageBox.*",
+      "ElNotification.*",
+      "alert",
+      "confirm",
+      "showWarningMessage"
+    ];
+  }
+  if (uiLibrary === "vant") {
+    return ["Toast", "Toast.*"];
+  }
+  return [];
+}
 function normalizeConfig(config) {
   const vueVersion = detectVueVersion(config);
+  const rawBaseDir = config.baseDir || "src";
+  const baseDirs = Array.isArray(rawBaseDir) ? rawBaseDir : [rawBaseDir];
+  const rawEntry = config.entry || ["**/*.vue"];
+  const entry = [];
+  for (const base of baseDirs) {
+    for (const pattern of rawEntry) {
+      if (pattern.startsWith(base + "/") || pattern.startsWith("./") || pattern.startsWith("../")) {
+        entry.push(pattern);
+      } else {
+        entry.push(base + "/" + pattern);
+      }
+    }
+  }
   return {
     projectPath: config.projectPath || ".",
     vueVersion,
     scanScript: config.scanScript !== void 0 ? config.scanScript : true,
     scriptTargets: config.scriptTargets || {},
     scriptReactive: config.scriptReactive !== void 0 ? config.scriptReactive : false,
-    entry: config.entry || ["src/**/*.vue"],
+    entry,
     exclude: config.exclude || [],
     output: config.output || "src/locales",
     sourceLanguage: config.sourceLanguage || "zh-CN",
@@ -92508,13 +92412,7 @@ function normalizeConfig(config) {
     localeStorageKey: config.localeStorageKey || "lang",
     translateAttributes: config.translateAttributes || [],
     ignoreAttributes: config.ignoreAttributes || [],
-    translateMethods: config.translateMethods || [
-      "ElMessage.*",
-      "ElMessageBox.*",
-      "ElNotification.*",
-      "alert",
-      "confirm"
-    ],
+    translateMethods: config.translateMethods || getDefaultTranslateMethods(vueVersion, config.uiLibrary),
     logDir: config.logDir || "logs",
     ai: config.ai || { enabled: false },
     uiLibrary: config.uiLibrary || (vueVersion === 2 ? "element-ui" : "element-plus"),
@@ -92912,6 +92810,7 @@ function printDryRun(fileGroups, matched, unmatched, special, filesScanned, erro
       }
     }
   }
+  printParseErrors(errors, PROJECT_ROOT);
   const templateMatched = matched.filter((i) => i.section === "template").length;
   const scriptMatched = matched.filter((i) => i.section === "script").length;
   const templateUnmatched = unmatched.filter((i) => i.section === "template").length;
@@ -93081,9 +92980,6 @@ async function runScan(fileGroups, matched, unmatched, special, filesScanned, er
   console.log("");
   printSeparator("\u8B66\u544A\uFF1A\u5373\u5C06\u4FEE\u6539\u6E90\u6587\u4EF6");
   console.log("  \u4EE5\u4E0A\u5339\u914D\u9879\u5C06\u88AB\u66FF\u6362\u4E3A $t() \u8C03\u7528");
-  if (unmatched.length > 0) {
-    console.log(`  ${unmatched.length} \u6761\u672A\u5339\u914D\u7684\u4E2D\u6587\u5C06\u8FFD\u52A0\u5230\u8BED\u8A00\u5305`);
-  }
   console.log("");
   if (!skipConfirm) {
     const ok = await confirm("\u662F\u5426\u6267\u884C\u66FF\u6362\uFF1F");

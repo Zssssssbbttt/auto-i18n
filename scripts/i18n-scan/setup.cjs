@@ -664,12 +664,6 @@ const UI_LIBRARY_OPTIONS = [
   { value: "none", label: "无组件库" },
 ];
 
-const KEY_STYLE_OPTIONS = [
-  { value: "camelCase", label: "camelCase（小驼峰）" },
-  { value: "snake_case", label: "snake_case（蛇形）" },
-  { value: "kebab-case", label: "kebab-case（短横线）" },
-];
-
 const AI_MODEL_OPTIONS = [
   { value: "gpt-4o", label: "gpt-4o — OpenAI 最新多模态" },
   { value: "gpt-4", label: "gpt-4 — OpenAI GPT-4" },
@@ -822,14 +816,6 @@ const ADVANCED_ITEMS = [
     description: "语言包文件输出目录",
     type: "input",
     default: "src/locales",
-  },
-  {
-    key: "keyStyle",
-    title: "Key 命名风格",
-    description: "生成 key 的命名风格",
-    type: "select",
-    options: KEY_STYLE_OPTIONS,
-    default: "camelCase",
   },
   {
     key: "logDir",
@@ -1084,9 +1070,6 @@ function writeConfig(flat, configPath) {
   lines.push("");
   lines.push("  // 需要翻译的方法调用（白名单，支持通配符如 ElMessage.*）");
   lines.push(`  translateMethods: ${JSON.stringify(nested.translateMethods)},`);
-  lines.push("");
-  lines.push("  // key 命名风格");
-  lines.push(`  keyStyle: ${JSON.stringify(nested.keyStyle || "camelCase")},`);
   lines.push("");
   lines.push("  // 日志目录");
   lines.push(`  logDir: ${JSON.stringify(nested.logDir || "logs")},`);
@@ -1438,7 +1421,6 @@ function printSummary(config) {
 
   rows.push(
     ["输出目录", config.output],
-    ["Key 风格", config.keyStyle],
     ["日志目录", config.logDir],
   );
 

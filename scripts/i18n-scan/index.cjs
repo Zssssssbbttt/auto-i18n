@@ -19,7 +19,7 @@ const {
 const { lookupKey } = require("./generators/key-generator.cjs");
 const { replaceInFile } = require("./replacer.cjs");
 const { translateViaAI } = require("./translator.cjs");
-const { printSeparator, printFileHeader } = require("./utils/logger.cjs");
+const { printSeparator, printFileHeader, printParseErrors } = require("./utils/logger.cjs");
 const { runInit } = require("./init.cjs");
 
 // 脚本所在目录（配置文件 i18n.config.js 位于同级目录）
@@ -147,6 +147,38 @@ function detectVueVersion(config) {
 }
 
 /**
+ * 根据 Vue 版本和 UI 组件库获取 translateMethods 默认值
+ * Vue 3: 按组件库区分（element-plus / vant / none）
+ * Vue 2: 统一使用 this.$message.* 等实例方法
+ */
+function getDefaultTranslateMethods(vueVersion, uiLibrary) {
+  if (vueVersion === 2) {
+    return [
+      'this.$message.*',
+      'this.$confirm',
+      'this.$alert',
+      'this.$prompt',
+      'this.$notify.*',
+    ]
+  }
+  // Vue 3
+  if (uiLibrary === 'element-plus') {
+    return [
+      'ElMessage.*',
+      'ElMessageBox.*',
+      'ElNotification.*',
+      'alert',
+      'confirm',
+      'showWarningMessage',
+    ]
+  }
+  if (uiLibrary === 'vant') {
+    return ['Toast', 'Toast.*']
+  }
+  return []
+}
+
+/**
  * 规范化配置，填充默认值
  * @param {object} config - 用户配置
  * @returns {object} 规范化后的配置
@@ -154,13 +186,30 @@ function detectVueVersion(config) {
 function normalizeConfig(config) {
   const vueVersion = detectVueVersion(config)
 
+  // 解析 baseDir：支持字符串或数组，默认 "src"
+  const rawBaseDir = config.baseDir || "src"
+  const baseDirs = Array.isArray(rawBaseDir) ? rawBaseDir : [rawBaseDir]
+
+  // 解析 entry：如果 pattern 不是以 baseDir 开头，自动拼接
+  const rawEntry = config.entry || ["**/*.vue"]
+  const entry = []
+  for (const base of baseDirs) {
+    for (const pattern of rawEntry) {
+      if (pattern.startsWith(base + "/") || pattern.startsWith("./") || pattern.startsWith("../")) {
+        entry.push(pattern)
+      } else {
+        entry.push(base + "/" + pattern)
+      }
+    }
+  }
+
   return {
     projectPath: config.projectPath || ".",
     vueVersion,
     scanScript: config.scanScript !== undefined ? config.scanScript : true,
     scriptTargets: config.scriptTargets || {},
     scriptReactive: config.scriptReactive !== undefined ? config.scriptReactive : false,
-    entry: config.entry || ["src/**/*.vue"],
+    entry,
     exclude: config.exclude || [],
     output: config.output || "src/locales",
     sourceLanguage: config.sourceLanguage || "zh-CN",
@@ -168,9 +217,7 @@ function normalizeConfig(config) {
     localeStorageKey: config.localeStorageKey || "lang",
     translateAttributes: config.translateAttributes || [],
     ignoreAttributes: config.ignoreAttributes || [],
-    translateMethods: config.translateMethods || [
-      'ElMessage.*', 'ElMessageBox.*', 'ElNotification.*', 'alert', 'confirm'
-    ],
+    translateMethods: config.translateMethods || getDefaultTranslateMethods(vueVersion, config.uiLibrary),
     logDir: config.logDir || "logs",
     ai: config.ai || { enabled: false },
     uiLibrary: config.uiLibrary || (vueVersion === 2 ? "element-ui" : "element-plus"),
@@ -725,6 +772,9 @@ function printDryRun(
     }
   }
 
+  // 解析失败的文件列表（未参与扫描，中文需人工处理）
+  printParseErrors(errors, PROJECT_ROOT);
+
   // 按 section 统计
   const templateMatched = matched.filter((i) => i.section === "template").length;
   const scriptMatched = matched.filter((i) => i.section === "script").length;
@@ -964,9 +1014,6 @@ async function runScan(
   console.log("");
   printSeparator("警告：即将修改源文件");
   console.log("  以上匹配项将被替换为 $t() 调用");
-  if (unmatched.length > 0) {
-    console.log(`  ${unmatched.length} 条未匹配的中文将追加到语言包`);
-  }
   console.log("");
 
   if (!skipConfirm) {

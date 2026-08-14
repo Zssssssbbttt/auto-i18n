@@ -124,20 +124,30 @@ function replaceInFile(filePath, items, reverseMap, scriptReactive = false, vueV
 
       if (item.type === 'static-attr') {
         // 静态属性：定位整个属性 label="中文" → :label="$t('key')"
-        const pattern = `${item.attrName}="${item.chineseText}"`
-        const idx = line.indexOf(pattern)
+        // 属性值可能是单引号或双引号，两种都要尝试
+        let pattern = `${item.attrName}="${item.chineseText}"`
+        let idx = line.indexOf(pattern)
+        if (idx === -1) {
+          pattern = `${item.attrName}='${item.chineseText}'`
+          idx = line.indexOf(pattern)
+        }
         if (idx === -1) {
           // 可能跨多行（如 placeholder 值换行），尝试多行匹配
           if (item.chineseText.includes('\n')) {
-            const startPattern = `${item.attrName}="`
-            const startIdx = line.indexOf(startPattern)
-            if (startIdx !== -1) {
+            const startPatterns = [`${item.attrName}="`, `${item.attrName}='`]
+            const found = startPatterns
+              .map((p) => ({ p, i: line.indexOf(p) }))
+              .filter((x) => x.i >= 0)
+              .sort((a, b) => a.i - b.i)[0]
+            if (found) {
+              const startIdx = found.i
+              const quote = found.p.endsWith('"') ? '"' : "'"
               // 找闭合引号所在行
               let endLineIdx = lineIdx
               let endCol = -1
               for (let j = lineIdx; j < lines.length; j++) {
-                const searchFrom = j === lineIdx ? startIdx + startPattern.length : 0
-                const endIdx = lines[j].indexOf('"', searchFrom)
+                const searchFrom = j === lineIdx ? startIdx + found.p.length : 0
+                const endIdx = lines[j].indexOf(quote, searchFrom)
                 if (endIdx !== -1) {
                   endLineIdx = j
                   endCol = endIdx

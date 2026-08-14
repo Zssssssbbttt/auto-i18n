@@ -50,13 +50,14 @@ scripts/i18n-scan/
 1. 检查项目 `package.json` 中是否有 `vue-i18n` 依赖，缺失则自动安装（识别 npm/yarn/pnpm）
 2. 校验 `sharedLocales`（如有配置）：路径存在、语言文件齐全、key 数量一致。校验失败时交互模式询问是否继续（跳过共享包），非交互模式自动跳过
 3. 根据 `uiLibrary` 配置生成 `index.ts`：
-   - `"element-plus"` → 完整模板：含 Element Plus locale 集成、语言切换同步（watch + install 拦截）
+   - `"element-plus"` → 完整模板：动态遍历所有配置语言生成 Element Plus locale 导入和注册，语言切换同步（watch + install 拦截）
+   - `"element-ui"` → Vue 2 完整模板：动态遍历所有配置语言生成 Element UI locale 导入和注册
    - `"vant"` 或 `"none"` → 精简模板：仅 vue-i18n 核心配置，无 UI 库耦合
    - 有共享包时生成 `deepMerge` 工具函数，messages 使用深度合并（共享包在前，项目包覆盖在后）
 4. 创建语言包空文件（zh-CN.json / en.json 等），已存在则跳过不覆盖
-5. 检测 `index.ts` 中的语言注册：缺失的自动补齐（`patchIndexContent`），多余的（已从配置中移除）自动清理注册（`removeLangFromIndex`），不删除语言包 JSON 文件
+5. 根据配置完整重建 `index.ts`（每次 init 都遍历所有配置语言重新生成，不再使用补丁方式）
 6. 生成 `typeToString.ts`（TS 类型转换辅助）、`useI18n.ts`（composable）、`toI18n.ts`（运行时反向映射辅助）
-7. 更新 `main.ts`：补全 i18n 引入、全局 `$t` 注册、`@vnet/i18n` 注册（`getComponentMessages` + `mergeLocaleMessage` + `setI18nInstance`）、`app.use(i18n)`
+7. 更新 `main.ts`：补全 i18n 引入、全局 `$t` 注册。Vue 3 额外注入 `@vnet/i18n` 注册（`getComponentMessages` + `mergeLocaleMessage` + `setI18nInstance`）、`app.use(i18n)`
 
 ### 扫描流程
 1. 加载 `i18n.config.js` 配置
@@ -93,6 +94,7 @@ scripts/i18n-scan/
 脚本行为完全由同级目录的 `i18n.config.js` 驱动，关键配置项：
 
 - `projectPath` — 项目根目录
+- `baseDir` — 源码根目录（默认 `"src"`），支持字符串或数组。用于拼接 `entry` 扫描路径：如 `baseDir: "app"` + `entry: ["**/*.vue"]` → 实际扫描 `app/**/*.vue`。entry 已包含 baseDir 前缀时不重复拼接
 - `entry` / `exclude` — 扫描范围（glob 模式），支持 `.vue`、`.ts`、`.js` 文件
 - `scanScript` — 是否扫描 `<script>` 中的中文（总开关），默认 true
 - `scriptTargets` — script 翻译目标变量配置，精确指定 **变量名 → 属性名数组** 的正向映射。如 `{ columns: ['label', 'title'] }` 只翻译 `columns` 变量的 `label` 和 `title` 属性。值为 `[]` 表示翻译该变量内所有中文（递归）。**不在配置中的变量不会被翻译**。
@@ -100,7 +102,11 @@ scripts/i18n-scan/
 - `uiLibrary` — UI 组件库类型（`"element-plus"` / `"vant"` / `"none"`），决定生成的 `index.ts` 模板和 `translateMethods` 默认值
 - `translateAttributes` — 需要翻译的 HTML 属性白名单（如 label, placeholder, title）
 - `ignoreAttributes` — 永远不翻译的属性黑名单（优先级更高）
-- `translateMethods` — 需要翻译的方法调用白名单（支持通配符如 ElMessage.*）。默认值根据 `uiLibrary` 自动设置：Element Plus → `['ElMessage.*', 'ElMessageBox.*', 'ElNotification.*', 'alert', 'confirm', 'showWarningMessage']`，Vant → `['Toast', 'Toast.*']`，无组件库 → `[]`
+- `translateMethods` — 需要翻译的方法调用白名单（支持通配符如 ElMessage.*）。默认值根据 Vue 版本和 UI 库自动设置：
+  - Vue 3 + Element Plus → `['ElMessage.*', 'ElMessageBox.*', 'ElNotification.*', 'alert', 'confirm', 'showWarningMessage']`
+  - Vue 3 + Vant → `['Toast', 'Toast.*']`
+  - Vue 3 + 无组件库 → `[]`
+  - Vue 2（不区分组件库）→ `['this.$message.*', 'this.$confirm', 'this.$alert', 'this.$prompt', 'this.$notify.*']`
 - `sourceLanguage` / `targetLanguages` — 源语言和目标语言列表
 - `output` — locale 输出目录（默认 src/locales）
 - `ai.enabled` / `ai.apiKey` / `ai.baseURL` / `ai.model` — AI 翻译配置

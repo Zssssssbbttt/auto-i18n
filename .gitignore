@@ -20,9 +20,9 @@ coverage
 !.vscode/extensions.json
 .idea
 *.suo
+program
 *.ntvs*
 *.njsproj
-program
 *.sln
 *.sw?
 

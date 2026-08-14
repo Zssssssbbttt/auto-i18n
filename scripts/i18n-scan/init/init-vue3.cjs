@@ -102,27 +102,36 @@ function deepMerge(target: any, ...sources: any[]): any {
     .join('\n')
 
   if (uiLibrary === 'element-plus') {
+    // Element Plus locale 导入（动态遍历所有语言，与 Vue 2 一致）
+    const elementImports = allLangs
+      .map((l) => `import ${langToVarName(l)}Element from 'element-plus/dist/locale/${l.toLowerCase()}.mjs'`)
+      .join('\n')
+
+    const elementEntries = allLangs
+      .map((l) => `  '${l}': ${langToVarName(l)}Element,`)
+      .join('\n')
+
+    const defaultLocale = sourceLang
+
     return `import { createI18n } from 'vue-i18n'
 import { i18nTypeToString } from './typeToString'
 import { translateText, translateArray } from './toI18n'
 import { ref, watch } from 'vue'
 import { localeContextKey } from 'element-plus'
 ${localImports}
-${sharedImports}import zhCNElement from 'element-plus/dist/locale/zh-cn.mjs'
-import enElement from 'element-plus/dist/locale/en.mjs'${deepMergeFn}
+${sharedImports}${elementImports}${deepMergeFn}
 const elementLocales: Record<string, any> = {
-  'zh-CN': zhCNElement,
-  en: enElement,
+${elementEntries}
 }
 
 const currentElementLocale = ref(
-  elementLocales[localStorage.getItem('${storageKey}') || 'zh-CN'] ||
-    elementLocales['zh-CN']
+  elementLocales[localStorage.getItem('${storageKey}') || '${defaultLocale}'] ||
+    elementLocales['${defaultLocale}']
 )
 
 const i18n = createI18n({
   legacy: false,
-  locale: localStorage.getItem('${storageKey}') || 'zh-CN',
+  locale: localStorage.getItem('${storageKey}') || '${defaultLocale}',
   messages: {
 ${messagesLines}
   },
@@ -133,7 +142,7 @@ watch(
   () => i18n.global.locale.value,
   (newLocale) => {
     currentElementLocale.value =
-      elementLocales[newLocale] || elementLocales['zh-CN']
+      elementLocales[newLocale] || elementLocales['${defaultLocale}']
   }
 )
 
@@ -289,20 +298,22 @@ function updateMainTs(projectRoot) {
     let inserted = false
     for (let i = 0; i < lines.length; i++) {
       if (/^\s*(?:const\s+)?app\s*=\s*createApp/.test(lines[i].trim())) {
+        // 继承锚点行的缩进，保证 createApp 嵌套在函数内时注入块缩进一致
+        const indent = lines[i].match(/^\s*/)[0]
         lines.splice(
           i + 1,
           0,
           '',
-          `// 全局注册 $t，模板中可直接使用`,
-          globalTLine,
+          `${indent}// 全局注册 $t，模板中可直接使用`,
+          `${indent}${globalTLine}`,
           '',
-          `// 将公共组件词条合并到当前 i18n 实例，并注册到 @vnet/i18n，`,
-          `// 使 FlowProcess 等公共组件能随项目语言切换`,
-          `const compMsgs = getComponentMessages()`,
-          `for (const locale of Object.keys(compMsgs)) {`,
-          `  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
-          `}`,
-          `setI18nInstance(i18n)`,
+          `${indent}// 将公共组件词条合并到当前 i18n 实例，并注册到 @vnet/i18n，`,
+          `${indent}// 使 FlowProcess 等公共组件能随项目语言切换`,
+          `${indent}const compMsgs = getComponentMessages()`,
+          `${indent}for (const locale of Object.keys(compMsgs)) {`,
+          `${indent}  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
+          `${indent}}`,
+          `${indent}setI18nInstance(i18n)`,
         )
         content = lines.join('\n')
         console.log('  新增: main.ts 添加全局 $t 注册及 @vnet/i18n 注册')
@@ -322,17 +333,18 @@ function updateMainTs(projectRoot) {
       let inserted = false
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].trim() === globalTLine) {
+          const indent = lines[i].match(/^\s*/)[0]
           lines.splice(
             i + 1,
             0,
             '',
-            `// 将公共组件词条合并到当前 i18n 实例，并注册到 @vnet/i18n，`,
-            `// 使 FlowProcess 等公共组件能随项目语言切换`,
-            `const compMsgs = getComponentMessages()`,
-            `for (const locale of Object.keys(compMsgs)) {`,
-            `  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
-            `}`,
-            `setI18nInstance(i18n)`,
+            `${indent}// 将公共组件词条合并到当前 i18n 实例，并注册到 @vnet/i18n，`,
+            `${indent}// 使 FlowProcess 等公共组件能随项目语言切换`,
+            `${indent}const compMsgs = getComponentMessages()`,
+            `${indent}for (const locale of Object.keys(compMsgs)) {`,
+            `${indent}  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])`,
+            `${indent}}`,
+            `${indent}setI18nInstance(i18n)`,
           )
           content = lines.join('\n')
           console.log('  新增: main.ts 添加 @vnet/i18n 注册代码')
@@ -368,9 +380,26 @@ function updateMainTs(projectRoot) {
       const beforeMount = line.slice(0, mountIdx).trimEnd()
 
       if (!beforeMount) {
-        // 模式 A: 缩进续行 — 行首只有空白，然后是 .mount(
-        const indent = line.slice(0, line.length - line.trimStart().length)
-        lines.splice(i, 0, `${indent}.use(i18n)`)
+        // 模式 A: .mount( 是续行 — 缩进应取链的兄弟续行（如 .use(router)），
+        // 而不是 .mount( 行自身的缩进（续行缩进可能比兄弟链深）
+        const mountIndent = line.slice(0, line.length - line.trimStart().length)
+        let chainIndent = null
+        for (let j = i - 1; j >= 0; j--) {
+          const prev = lines[j]
+          if (!prev.trim()) continue
+          const prevIndent = prev.slice(0, prev.length - prev.trimStart().length)
+          if (prev.trimStart().startsWith('.')) {
+            // 兄弟续行：直接复用其缩进
+            chainIndent = prevIndent
+            break
+          }
+          if (prevIndent.length < mountIndent.length) {
+            // 链的基行（如 app）：续行缩进 = 基行缩进 + 2
+            chainIndent = prevIndent + '  '
+            break
+          }
+        }
+        lines.splice(i, 0, `${chainIndent !== null ? chainIndent : mountIndent}.use(i18n)`)
       } else if (beforeMount.endsWith(')')) {
         // 模式 B: 同行链式调用 — .mount( 前有 ).use() 等链式调用
         lines[i] = beforeMount + '.use(i18n)' + line.slice(mountIdx)
@@ -466,131 +495,6 @@ export function translateArray<T extends Record<string, any>>(arr: T[], keyName:
 `
 }
 
-/**
- * 在已有 index.ts 中补齐缺失语言的注册代码（精确补丁，不重写整个文件）
- * @param {string} existingContent - 现有 index.ts 内容
- * @param {object} config - i18n 配置
- * @param {string[]} missingLangs - 缺失的语言代码列表
- * @returns {string} 补齐后的内容
- */
-function patchIndexContent(existingContent, config, missingLangs) {
-  const uiLibrary = config.uiLibrary || 'element-plus'
-  const hasShared = existingContent.includes('deepMerge(')
-  const lines = existingContent.split('\n')
-
-  // 在 lines 中从后往前找匹配 regex 的行，在其后插入 newLine
-  function insertAfterLastMatch(regex, newLine) {
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (regex.test(lines[i])) {
-        lines.splice(i + 1, 0, newLine)
-        return
-      }
-    }
-  }
-
-  // 找到 openPattern 匹配行所开启的 {} 块的闭合行，在其前插入 newLine
-  function insertBeforeBlockClosing(openPattern, newLine) {
-    let startIdx = -1
-    for (let i = 0; i < lines.length; i++) {
-      if (openPattern.test(lines[i])) {
-        startIdx = i
-        break
-      }
-    }
-    if (startIdx === -1) return
-
-    let depth = 0
-    let started = false
-    for (let i = startIdx; i < lines.length; i++) {
-      for (const ch of lines[i]) {
-        if (ch === '{') { depth++; started = true }
-        else if (ch === '}') {
-          depth--
-          if (started && depth === 0) {
-            lines.splice(i, 0, newLine)
-            return
-          }
-        }
-      }
-    }
-  }
-
-  for (const lang of missingLangs) {
-    const varName = langToVarName(lang)
-
-    // 1. 本地 JSON import: import th from './th.json'
-    insertAfterLastMatch(
-      /import \w+ from '\.\/[\w-]+\.json'/,
-      `import ${varName} from './${lang}.json'`
-    )
-
-    if (uiLibrary === 'element-plus') {
-      // 2. element-plus locale import: import thElement from 'element-plus/dist/locale/th.mjs'
-      const elementLang = lang.toLowerCase()
-      insertAfterLastMatch(
-        /import \w+ from 'element-plus\/dist\/locale\//,
-        `import ${varName}Element from 'element-plus/dist/locale/${elementLang}.mjs'`
-      )
-
-      // 3. elementLocales 条目: th: thElement,
-      insertBeforeBlockClosing(
-        /const elementLocales/,
-        `  '${lang}': ${varName}Element,`
-      )
-    }
-
-    // 4. messages 条目: 'th': th, 或 'th': deepMerge({}, th),
-    const msgEntry = hasShared
-      ? `    '${lang}': deepMerge({}, ${varName}),`
-      : `    '${lang}': ${varName},`
-    insertBeforeBlockClosing(/messages:\s*\{/, msgEntry)
-  }
-
-  return lines.join('\n')
-}
-
-/**
- * 从 index.ts 中移除多余语言的注册代码
- * @param {string} existingContent - 现有 index.ts 内容
- * @param {object} config - i18n 配置
- * @param {string[]} extraLangs - 需要移除的语言代码列表
- * @returns {string} 移除后的内容
- */
-function removeLangFromIndex(existingContent, config, extraLangs) {
-  if (extraLangs.length === 0) return existingContent
-  const uiLibrary = config.uiLibrary || 'element-plus'
-  let lines = existingContent.split('\n')
-
-  for (const lang of extraLangs) {
-    const varName = langToVarName(lang)
-
-    // 1. 移除 messages 和 elementLocales 中的条目（格式均为 'th': xxx,）
-    lines = lines.filter((line) => {
-      return !line.trim().startsWith(`'${lang}':`)
-    })
-
-    // 2. 移除 element-plus locale import
-    if (uiLibrary === 'element-plus') {
-      lines = lines.filter((line) => {
-        const pattern = new RegExp(
-          `import\\s+\\w+\\s+from\\s+['"]element-plus\\/dist\\/locale\\/${lang.toLowerCase()}\\.mjs['"]`
-        )
-        return !pattern.test(line)
-      })
-    }
-
-    // 3. 移除本地 JSON import
-    lines = lines.filter((line) => {
-      const pattern = new RegExp(
-        `import\\s+${varName}\\s+from\\s+['"]\\.\\/${lang}\\.json['"]`
-      )
-      return !pattern.test(line)
-    })
-  }
-
-  return lines.join('\n')
-}
-
 module.exports = {
   i18nPackageName,
   generateIndexContent,
@@ -598,6 +502,4 @@ module.exports = {
   generateUseI18n,
   generateToI18n,
   updateMainTs,
-  patchIndexContent,
-  removeLangFromIndex,
 }

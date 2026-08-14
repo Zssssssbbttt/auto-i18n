@@ -1,124 +1,142 @@
-# Bug 修复记录
+# toI18n.cjs 全量测试 Bug 报告
 
-## 2026-08-12
-
-### translator: AI 翻译空值时导致语言包 key 数量不一致
-
-- **现象**：AI 对某条中文返回了 key，但某个目标语言（如泰语）的翻译为空字符串，导致 `zh-CN.json` 写入了该 key，而 `th.json` 没有写入，三个语言包 key 数量对不上
-- **根因**：写回逻辑（`translator.cjs` 中 `translateViaAI` 的 Step 4）对源语言无条件写入 `sourceData[module][shortKey] = chineseText`，但对目标语言有 `if (translation)` 条件判断，翻译为空时跳过
-- **影响**：项目自身语言包无 key 数量校验（`validateLocalePaths` 仅用于 shared/reference），不一致不会被发现，但会导致目标语言 `$t()` 显示 key 名而非翻译
-- **缓解**：下次运行 `--translate` 时 `findTranslationGaps` 会检测到该缺口并补齐，靠二次运行自愈
-- **状态**：已识别，未修复（待商定是否在写回后增加 key 数量一致性校验）
-
-### translator: 缺口翻译 prompt 未明确指定目标语言
-
-- **现象**：新增语言（如泰语）后运行 `--translate`，缺口补齐（Step 3b）生成的翻译大量缺失，且已有条目值为英文而非目标语言
-- **根因**：`callAiApiForGaps` 的 user prompt 只靠 JSON key 中的语言代码（如 `"th"`）暗示目标语言，从未显式告诉 AI 要翻译成什么语言。AI 容易默认输出英文
-- **修复**：
-  1. 新增 `langToName()` 映射函数（`th` → `泰语`、`en` → `英文` 等）
-  2. user prompt 改为 `目标语言：泰语\n\n...请将以下 JSON 中的空字符串替换为泰语的翻译...`
-- **文件**：`scripts/i18n-scan/translator.cjs`
-
-### init: toI18n.ts 未在主流 init 中生成
-
-- **现象**：`scripts/i18n-scan/init.cjs` 的 init 流程只生成 `typeToString.ts` 和 `useI18n.ts`，不生成 `toI18n.ts`（仅旧版 `vue2-scan/init.js` 有）
-- **修复**：在 `init-vue2.cjs` 和 `init-vue3.cjs` 中添加 `generateToI18n()`，`init.cjs` 中增加 `toI18n.ts` 生成步骤，并在生成的 `index.ts` 中将 `translateText` / `translateArray` 注册到 Vue 原型
-- **文件**：`scripts/i18n-scan/init.cjs`、`init/init-vue2.cjs`、`init/init-vue3.cjs`
-
-### toI18n.ts: 反向查找性能差 + console.log 残留
-
-- **现象**：`translateText` 每次调用都完整递归遍历 `zh-CN.json` 对象树，无缓存；生产环境打印 debug 日志
-- **修复**：模块加载时预建 `reverseMap`（`{ 中文: key }`），O(1) 查表；去掉 `console.log`
-- **文件**：`scripts/vue2-scan/init.js`、`scripts/i18n-scan/init/init-vue2.cjs`、`scripts/i18n-scan/init/init-vue3.cjs`
+> 测试时间: 2026-08-13
+> 测试脚本: `toI18n.cjs` (打包产物)
+> 测试项目: Vue2 PC (Element UI) / Vue3 PC (Element Plus) / Vue3 Mobile (Vant)
 
 ---
 
-## 2026-08-11
+## 测试覆盖
 
-### template-parser: @vue/compiler-dom 列号 1-based 导致 replacer 定位偏移
-
-- **现象**：同一行出现相同中文时（如 `<el-button @click="form.taskComment = '同意'">同意</el-button>`），replacer 的 col 定位永远差 1，失败后回退 `indexOf` 命中第一个（`@click` 里的），导致错误替换为 `{{ $t('key') }}`
-- **根因**：`@vue/compiler-dom` 的 `loc.start.column` 是 1-based，replacer 当 0-based 用
-- **修复**：`template-parser.cjs` 的 `getCol()` 改为 `loc.start.column - 1`，`extractTemplateLiterals()` 同理
-- **文件**：`scripts/i18n-scan/parsers/template-parser.cjs`
-
-### replacer: 多行 static-attr 属性值无法替换
-
-- **现象**：跨行属性值（如多行 placeholder）在单行内 `indexOf` 找不到完整 pattern，替换被跳过
-- **修复**：单行匹配失败且 `chineseText` 含换行时，启用多行匹配 — 找 `attrName="` 起始 → 向后扫描闭合 `"` → 跨行替换
-- **文件**：`scripts/i18n-scan/replacer.cjs`
-
-### init-vue2: main.ts 无条件生成 @vnet/i18n 代码
-
-- **现象**：Vue 2 项目通常无 `@vnet/i18n` 依赖，`updateMainTs()` 却无条件生成其 import 和注册代码
-- **修复**：从 `init-vue2.cjs` 的 `updateMainTs()` 移除 @vnet/i18n 相关代码生成
-- **文件**：`scripts/i18n-scan/init/init-vue2.cjs`
-
-### init-vue2: index.ts 模板缺少 $t 导出
-
-- **现象**：`main.ts` 中 `import { $t } from './locales'`，但生成的 `index.ts` 没有 `export const $t`
-- **修复**：在两个模板（element-ui 和 非 element-ui）的 `export default i18n` 之后添加 `export const $t = i18n.t.bind(i18n)`
-- **文件**：`scripts/i18n-scan/init/init-vue2.cjs`
+| 模式 | Vue2 | Vue3 PC | Vue3 Mobile |
+|------|------|---------|-------------|
+| `-a` (全流程) | ✓ | — | — |
+| `-i` (初始化) | ✓ | ✓ | ✓ |
+| `-d` (预览) | ✓ | ✓ | ✓ |
+| `-s` (替换) | ✓ | — | — |
+| `-g` (盲区) | ✓ | — | — |
 
 ---
 
-## 2026-08-10
+## Bug 1 [P0]: `--scan` 单引号静态属性"已匹配但不替换"
 
-### setup.cjs: 缺少 element-ui 选项
+**复现步骤**: 源文件包含单引号属性值，如 `<el-table-column label='组类型' />`，且语言包中有对应 key，执行 `-s`。
 
-- **现象**：`UI_LIBRARY_OPTIONS` 只有 element-plus / vant / none，Vue 2 项目无法选择 Element UI
-- **修复**：
-  - 新增 `{ value: "element-ui", label: "Element UI（Vue 2）" }`
-  - `UI_TRANSLATE_METHODS_MAP` 新增 element-ui 条目（`this.$message.*`、`this.$confirm` 等）
-  - `uiLibrary` 默认值根据 `vueVersion` 动态调整
-- **文件**：`scripts/i18n-scan/setup.cjs`
+**现象**: 扫描阶段正确识别为"已匹配"（`已匹配替换: N`），但替换阶段静默跳过（`修改文件: 0`），该中文原样保留。双引号属性 `label="中文"` 正常替换。
 
-### template-parser + replacer: 同行相同中文 col 定位缺失
+**根因**: `replacer.cjs` 的 `static-attr` 分支硬编码双引号模式 `` `${attrName}="${chineseText}"` `` 做 `indexOf` 定位。Vue 模板允许单引号属性值（AST 扫描器正常解析），但替换器找不到模式 → `idx === -1` → 静默 `continue`，`changed` 保持 false。
 
-- **现象**：同一行相同中文出现多次时，replacer 用 `indexOf` 找位置，命中第一个导致错误替换
-- **修复**：template-parser 所有 result 类型新增 `col` 字段（AST `loc.start.column`），replacer 优先用列号精确定位
-- **注意**：此修复未考虑 1-based 问题，col 定位实际未生效，在 2026-08-11 的列号修复中彻底解决
-- **文件**：`scripts/i18n-scan/parsers/template-parser.cjs`、`scripts/i18n-scan/replacer.cjs`
+**影响**: "已匹配"的条目实际未替换，用户看到的计数与真实修改不一致，且此类中文永远翻译不了。
+
+**修复**（2026-08-14）: `static-attr` 分支依次尝试双引号和单引号两种模式；多行匹配分支同样支持两种引号并据此找闭合引号。单测 `test-replacer-changed.cjs` 覆盖单引号/多行单引号/双轮回归，11/11 通过。
 
 ---
 
-## 2026-08-09
+## Bug 2 [P0]: Vue3 项目 `main.ts` 注入代码缩进错误
 
-### script-parser: @babel/parser 解析 .ts 文件缺少 decorators-legacy 插件
+**复现步骤**: 对 Vue3 Mobile 项目（qiankun 微前端，`render()` 函数写法）执行 `-i`。
 
-- **现象**：TypeScript 项目中使用 `@HttpBindNormal()` 等装饰器时，babel parser 直接抛异常，`parseScript` 的 try-catch 返回空数组，整个文件被静默跳过
-- **修复**：parser plugins 数组中添加 `'decorators-legacy'`，放在 `'typescript'` 之前
-- **文件**：`scripts/i18n-scan/parsers/script-parser.cjs`
+**现象**: 注入的 `@vnet/i18n` 注册代码和 `.use(i18n)` 缩进不正确，代码结构被破坏：
 
-### replacer: injectImports 只处理 .vue 文件
+```ts
+// 生成的代码（缩进错误）
+  app = createApp(App)
 
-- **现象**：`.ts` / `.js` 文件替换后 `$t()` 没有对应 import，TypeScript 报 `Cannot find name '$t'`
-- **根因**：`injectImports` 依赖 `<script>` 标签定位，`.ts`/`.js` 文件找不到标签直接 return
-- **修复**：`scriptMatch` 匹配失败时走 else 分支处理纯 TS/JS 文件 — 找到全文件最后一个 import 后插入，无 import 则在文件顶部插入
-- **文件**：`scripts/i18n-scan/replacer.cjs`
+// 全局注册 $t，模板中可直接使用
+app.config.globalProperties.$t = $t          // ← 缩进不匹配
+
+// @vnet/i18n 注册代码块
+const compMsgs = getComponentMessages()      // ← 在 render 函数内但缩进不对
+// ...
+        .use(i18n)                           // ← 多余缩进
+        .mount(...)
+}
+```
+
+**根因**（`init/init-vue3.cjs` 的 `updateMainTs()`）：
+1. `$t` 注册 + @vnet/i18n 块以硬编码无缩进字符串拼接，未继承 `app = createApp(App)` 锚点行的前导空白
+2. 模式 A 的 `.use(i18n)` 缩进复制自 `.mount(` 行自身，而续行缩进可能比兄弟链（`.use(router)` 等）深
+
+**预期**: 注入的代码应匹配周围代码的缩进风格。
+
+**影响**: 生成的代码在 IDE 中看起来结构混乱，`.use(i18n)` 的缩进会导致对代码结构的误解。
+
+**修复**（2026-08-14）: 两处注入均继承锚点行缩进；模式 A 的 `.use(i18n)` 缩进取兄弟续行缩进（无兄弟时取基行缩进 + 2）。单测 `test-update-main-ts.cjs` 覆盖真实 PC/移动端文件及全部代码路径，12/12 通过。
 
 ---
 
-## 2026-08-08
+## Bug 3 [已确认设计决策，不修复]: `@vnet/i18n` 无条件注入到所有 Vue3 项目
 
-### script-parser: TemplateLiteral 无插值分支缺少成员赋值检查
+**复现步骤**: 对 Vue3 Mobile 项目（使用 Vant，无 `@vnet/i18n` 依赖）执行 `-i`。
 
-- **现象**：`` form.label = `中文` `` 这种成员赋值中的模板字符串未被跳过
-- **修复**：在 TemplateLiteral no-interpolation 分支添加 `isMemberAssignmentTarget` 检查
-- **提交**：`1e2d231`
+**现象**: `main.ts` 被注入了：
+```ts
+import { setI18nInstance, getComponentMessages } from '@vnet/i18n'
+// ...
+const compMsgs = getComponentMessages()
+for (const locale of Object.keys(compMsgs)) {
+  i18n.global.mergeLocaleMessage(locale, compMsgs[locale])
+}
+setI18nInstance(i18n)
+```
 
-### script-parser: $t() 调用内的字符串被重复替换
-
-- **现象**：已有 `$t('确认')` 中的 `'确认'` 被再次扫描，导致二次替换
-- **修复**：添加 `isInTCall` 检查，跳过 `$t()` 调用参数中的字符串；同时添加 `ArrayExpression` 父节点检查，跳过数组元素中的字符串
-- **提交**：`21cbd6e`
+**决策**（2026-08-14 与用户确认）: `@vnet/i18n` 属于公共组件依赖，与脚本无关，脚本不负责安装。注入的注册代码是有意为之——使用公共组件（FlowProcess 等）的开发人员会在编译报错时自行安装公共依赖；不使用公共组件的项目无需理会。**保持现状，不做依赖检测。**
 
 ---
 
-## 2026-08-07
+## Bug 4 [P1]: Workspace 项目 `vue-i18n` 安装失败
 
-### Element Plus locale 无法跟随项目语言切换
+**复现步骤**: 对 `package.json` 中有 `workspace:*` 依赖的 Vue3 Mobile 项目执行 `-i` 或 `-a`。
 
-- **现象**：切换语言后 Element Plus 组件（如 ElMessage、ElTable）仍显示旧语言
-- **修复**：`index.ts` 模板中 Element Plus locale 改用 `ref` + `watch` 响应式同步，并通过拦截 `i18n.install` 自动 `provide` locale
-- **提交**：`488eff2`
+**现象**: `npm install vue-i18n` 失败：
+```
+npm error Unsupported URL Type "workspace:": workspace:^0.0.1
+```
+
+**预期**: 脚本应检测到 workspace 依赖并给出更清晰的指引（如"请在 workspace 根目录手动安装"），或使用项目已有的包管理器。
+
+**影响**: `vue-i18n` 未安装，后续 `index.ts` 中的 `import { createI18n } from 'vue-i18n'` 会报错。
+
+---
+
+## Bug 5 [P2]: Vant 项目未生成 Vant 语言包集成
+
+**复现步骤**: 对 `uiLibrary: "vant"` 的 Vue3 Mobile 项目执行 `-i`。
+
+**现象**: 生成的 `index.ts` 使用"none"模板（仅 vue-i18n 核心），没有 Vant locale 集成代码。
+
+**预期**: 类似 Element Plus 的语言包集成，应为 Vant 生成对应的 locale 切换逻辑。
+
+**影响**: 切换语言后 Vant 组件不会跟随切换语言。
+
+---
+
+## Bug 6 [P2]: Vue 2 模板解析报错文件不可见
+
+**复现步骤**: 对 Vue2 项目执行 `-d` 或 `-s`。
+
+**现象**: 扫描汇总只显示 `错误: N` 数字，用户不知道哪些文件解析失败、哪些中文没被扫描。
+
+**原因**: `@vue/compiler-sfc`（Vue 3 编译器）无法解析 Vue 2 特有的模板语法，解析失败的文件被静默跳过。且 compiler-sfc 对同一错误会重复上报两次（错误计数虚高）。
+
+**修复**（2026-08-14）:
+1. dry-run / scan 预览输出新增"解析失败（未扫描）"区块，列出失败文件的相对路径和原因（`utils/logger.cjs` 新增 `printParseErrors`，`printDryRun` 调用）
+2. `vue-sfc-parser.cjs` 对 `sfc.errors` 按消息去重，同一错误不再重复计入
+
+**验证**: 真实 Vue2 项目 `-d` 输出正确列出 `flowButtonsNew.vue` 及原因，错误计数 2 → 1。单测 `test-parse-error-output.cjs` 4/4 通过（含端到端 bundle 输出验证）。
+
+---
+
+## 其他观察
+
+1. **AI 翻译不可用**: 当前 API Key 余额不足（¥7.52），无法测试 `-t` 和缺口补齐功能。建议充值后补充测试。
+
+2. **替换正确性**: 手动填充语言包后，`-s` 替换结果正确——`label="中文"` → `:label="$t('key')"`、`<span>中文</span>` → `<span>{{ $t('key') }}</span>`、Vue 2 脚本中替换为 `this.$t('key')`（`buildReplacement` 按 `vueVersion` 区分）。
+
+3. **init 生成的 index.ts 正确性**: Vue2 生成 `new VueI18n()` + Element UI 模板，Vue3 生成 `createI18n()` + Element Plus 动态 locale 模板，结构正确。
+
+4. **语言包追加**: 未匹配的中文**不会**写入语言包（`appendNewKeys` 为有意的空实现，见《语言包管理与无AI模式方案》方向 B），由 `--translate` 或用户手动添加。dry-run 中原先的误导文案已移除。
+
+5. **import 注入**: `import { $t } from '@/locales'` 正确注入到被修改的文件中。
+
+6. **特殊项处理**: 模板字符串插值、字符串拼接被正确归类为"特殊-未处理"，写入日志文件。

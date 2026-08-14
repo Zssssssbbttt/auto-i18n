@@ -33,65 +33,6 @@ async function loadConfig() {
 }
 
 /**
- * 将语言代码转为变量名（camelCase）
- * zh-CN → zhCN, en → en, th → th
- */
-function langToVarName(lang) {
-  const parts = lang.split("-");
-  return (
-    parts[0].toLowerCase() +
-    parts
-      .slice(1)
-      .map((p) => p[0].toUpperCase() + p.slice(1))
-      .join("")
-  );
-}
-
-/**
- * 获取已有 index.ts 中缺失的语言列表
- * @param {string} filePath - index.ts 路径
- * @param {string[]} allLangs - 所有语言代码列表
- * @returns {string[]} 缺失的语言代码列表
- */
-function getMissingLangs(filePath, allLangs) {
-  if (!fs.existsSync(filePath)) return [...allLangs]
-  const content = fs.readFileSync(filePath, "utf-8")
-  const missing = []
-  for (const lang of allLangs) {
-    const varName = langToVarName(lang)
-    const importPattern = new RegExp(
-      `import\\s+${varName}\\s+from\\s+['"]\\.\\/${lang}\\.json['"]`
-    )
-    if (!importPattern.test(content)) {
-      missing.push(lang)
-    }
-  }
-  return missing
-}
-
-/**
- * 获取已有 index.ts 中多余的语言（注册了但不在配置中）
- * @param {string} filePath - index.ts 路径
- * @param {string[]} allLangs - 配置中的所有语言（含源语言）
- * @returns {string[]} 多余的语言代码列表
- */
-function getExtraLangs(filePath, allLangs) {
-  if (!fs.existsSync(filePath)) return []
-  const content = fs.readFileSync(filePath, "utf-8")
-  const extra = []
-  // 匹配所有 import xx from './xx.json'，提取语言代码
-  const importRe = /import\s+\w+\s+from\s+['"]\.\/([\w-]+)\.json['"]/g
-  let match
-  while ((match = importRe.exec(content)) !== null) {
-    const lang = match[1]
-    if (!allLangs.includes(lang) && !extra.includes(lang)) {
-      extra.push(lang)
-    }
-  }
-  return extra
-}
-
-/**
  * 执行初始化逻辑（可由 index.cjs --all 调用）
  * @param {object} config - i18n 配置
  * @param {string} projectRoot - 项目根目录
@@ -142,7 +83,7 @@ async function runInit(config, projectRoot, options = {}) {
       sharedLocales,
       projectRoot,
       sourceLang,
-      targetLangs
+      targetLangs,
     );
 
     if (valid) {
@@ -157,7 +98,7 @@ async function runInit(config, projectRoot, options = {}) {
       if (interactive && confirmFn) {
         const proceed = await confirmFn(
           "\n  是否继续？（继续将不合并共享语言包，生成标准 index.ts）",
-          true
+          true,
         );
         if (!proceed) {
           console.log("  已中止");
@@ -175,44 +116,18 @@ async function runInit(config, projectRoot, options = {}) {
   const vueVersion = config.vueVersion || 3;
   const api = require(`./init/init-vue${vueVersion}.cjs`);
 
-  // ========== 生成文件（统一接口调用） ==========
+  // ========== 生成 index.ts（每次根据配置完整重建） ==========
 
-  // 创建/更新 index.ts
   const indexFile = path.join(outputDir, "index.ts");
-  const allLangs = [sourceLang, ...targetLangs.filter((l) => l !== sourceLang)];
-  const missingLangs = getMissingLangs(indexFile, allLangs);
-
-  if (missingLangs.length > 0) {
-    if (fs.existsSync(indexFile)) {
-      // 补齐缺失的语言注册
-      let existingContent = fs.readFileSync(indexFile, "utf-8");
-      existingContent = api.patchIndexContent(existingContent, config, missingLangs);
-      fs.writeFileSync(indexFile, existingContent, "utf-8");
-      console.log(`  更新: index.ts（添加 ${missingLangs.join(', ')} 语言注册）`);
-    } else {
-      const indexContent = api.generateIndexContent(
-        config,
-        outputDir,
-        projectRoot,
-        validSharedLocales
-      );
-      fs.writeFileSync(indexFile, indexContent, "utf-8");
-      console.log(`  创建: index.ts`);
-    }
-  } else {
-    console.log(`  跳过: index.ts（已存在且语言配置完整）`);
-  }
-
-  // 清理多余的语言注册（注册了但不在配置中）
-  if (fs.existsSync(indexFile)) {
-    const extraLangs = getExtraLangs(indexFile, allLangs);
-    if (extraLangs.length > 0) {
-      let existingContent = fs.readFileSync(indexFile, "utf-8");
-      existingContent = api.removeLangFromIndex(existingContent, config, extraLangs);
-      fs.writeFileSync(indexFile, existingContent, "utf-8");
-      console.log(`  更新: index.ts（移除 ${extraLangs.join(', ')} 语言注册）`);
-    }
-  }
+  const indexContent = api.generateIndexContent(
+    config,
+    outputDir,
+    projectRoot,
+    validSharedLocales,
+  );
+  const indexExists = fs.existsSync(indexFile);
+  fs.writeFileSync(indexFile, indexContent, "utf-8");
+  console.log(`  ${indexExists ? "更新" : "创建"}: index.ts`);
 
   // 创建 typeToString.ts
   const typeToStringFile = path.join(outputDir, "typeToString.ts");

@@ -3,6 +3,8 @@
  * 仅负责控制台格式化输出，不写文件
  */
 
+const path = require('path')
+
 /**
  * 打印分隔线
  * @param {string} title - 分隔线标题（可选）
@@ -28,4 +30,22 @@ function printFileHeader(filePath) {
   printSeparator(`  ${filePath}  `)
 }
 
-module.exports = { printSeparator, printFileHeader }
+/**
+ * 打印解析失败的文件列表
+ * 这些文件因解析错误未参与扫描，其中文需要人工处理
+ * @param {object[]} errors - [{ file, message }]
+ * @param {string} projectRoot - 项目根目录（用于显示相对路径）
+ */
+function printParseErrors(errors, projectRoot) {
+  if (!errors || errors.length === 0) return
+  console.log('')
+  printSeparator('解析失败（未扫描）')
+  for (const err of errors) {
+    const relPath = err.file
+      ? path.relative(projectRoot, err.file).replace(/\\/g, '/')
+      : ''
+    console.log(`  ${relPath ? relPath + ' — ' : ''}${err.message}`)
+  }
+}
+
+module.exports = { printSeparator, printFileHeader, printParseErrors }
