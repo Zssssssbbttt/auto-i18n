@@ -13,9 +13,12 @@ const { parseScript } = require('./parsers/script-parser.cjs')
  * 扫描项目文件，提取所有中文文本
  * @param {object} config - 扫描配置（来自 i18n.config.js）
  * @param {string} projectRoot - 项目根目录
+ * @param {object} [options] - 扫描选项
+ * @param {boolean} [options.gap] - 盲区模式，跳过白名单/黑名单过滤
  * @returns {Promise<{ results: object[], errors: object[], filesScanned: number }>}
  */
-async function scanFiles(config, projectRoot) {
+async function scanFiles(config, projectRoot, options = {}) {
+  const { gap = false } = options;
   const allResults = []
   const allErrors = []
   let filesScanned = 0
@@ -62,7 +65,7 @@ async function scanFiles(config, projectRoot) {
     // 按文件扩展名分流：.vue → SFC 解析（含 template），.ts/.js → 纯 script 解析
     const ext = path.extname(filePath)
     if (ext === '.vue') {
-      const { results, errors } = parseVueFile(filePath, source, config)
+      const { results, errors } = parseVueFile(filePath, source, config, { gap })
       allResults.push(...results)
       errors.forEach((msg) => {
         allErrors.push({ file: filePath, message: msg })
@@ -73,7 +76,8 @@ async function scanFiles(config, projectRoot) {
           source,
           config.translateMethods || [],
           0,
-          config.scriptTargets || {}
+          config.scriptTargets || {},
+          gap
         )
         scriptResults.forEach((r) => {
           r.file = filePath

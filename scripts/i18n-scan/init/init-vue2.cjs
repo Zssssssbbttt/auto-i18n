@@ -2,7 +2,7 @@
  * Vue 2 初始化模块
  * 生成 Vue 2 + Element UI / Vant 的 i18n 配置文件和模板
  *
- * 模板参考 vue2-scan/init.js，接口与 init-vue3.cjs 统一
+ * 接口与 init-vue3.cjs 统一
  */
 
 const path = require('path')

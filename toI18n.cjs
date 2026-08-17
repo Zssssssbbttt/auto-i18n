@@ -1,6 +1,6 @@
 // toI18n.cjs — Vue 3 i18n 自动扫描脚本
 // 用法: node toI18n.cjs
-// 生成时间: 2026-08-14T09:47:32.565Z
+// 生成时间: 2026-08-17T09:49:29.704Z
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __glob = (map) => (path2) => {
@@ -60731,7 +60731,7 @@ var require_template_parser = __commonJS({
       DIRECTIVE: 7,
       COMPOUND_EXPRESSION: 8
     };
-    function parseTemplate(template, translateAttributes, ignoreAttributes, templateStartLine) {
+    function parseTemplate(template, translateAttributes, ignoreAttributes, templateStartLine, gap = false) {
       const results = [];
       let ast;
       try {
@@ -60748,11 +60748,12 @@ var require_template_parser = __commonJS({
         results,
         translateAttributes,
         ignoreAttributes,
-        templateStartLine
+        templateStartLine,
+        gap
       );
       return results;
     }
-    function walkNode(node, results, translateAttributes, ignoreAttributes, lineOffset) {
+    function walkNode(node, results, translateAttributes, ignoreAttributes, lineOffset, gap) {
       if (!node) return;
       switch (node.type) {
         case NODE_TYPE.ROOT:
@@ -60763,7 +60764,8 @@ var require_template_parser = __commonJS({
                 results,
                 translateAttributes,
                 ignoreAttributes,
-                lineOffset
+                lineOffset,
+                gap
               )
             );
           }
@@ -60774,7 +60776,8 @@ var require_template_parser = __commonJS({
             results,
             translateAttributes,
             ignoreAttributes,
-            lineOffset
+            lineOffset,
+            gap
           );
           break;
         case NODE_TYPE.TEXT:
@@ -60796,14 +60799,15 @@ var require_template_parser = __commonJS({
                 results,
                 translateAttributes,
                 ignoreAttributes,
-                lineOffset
+                lineOffset,
+                gap
               )
             );
           }
           break;
       }
     }
-    function walkElement(node, results, translateAttributes, ignoreAttributes, lineOffset) {
+    function walkElement(node, results, translateAttributes, ignoreAttributes, lineOffset, gap) {
       if (node.props) {
         node.props.forEach((prop) => {
           if (prop.type === NODE_TYPE.ATTRIBUTE) {
@@ -60813,7 +60817,8 @@ var require_template_parser = __commonJS({
               results,
               translateAttributes,
               ignoreAttributes,
-              lineOffset
+              lineOffset,
+              gap
             );
           } else if (prop.type === NODE_TYPE.DIRECTIVE) {
             handleDirective(
@@ -60822,7 +60827,8 @@ var require_template_parser = __commonJS({
               results,
               translateAttributes,
               ignoreAttributes,
-              lineOffset
+              lineOffset,
+              gap
             );
           }
         });
@@ -60834,17 +60840,20 @@ var require_template_parser = __commonJS({
             results,
             translateAttributes,
             ignoreAttributes,
-            lineOffset
+            lineOffset,
+            gap
           )
         );
       }
     }
-    function handleStaticAttribute(prop, element, results, translateAttributes, ignoreAttributes, lineOffset) {
+    function handleStaticAttribute(prop, element, results, translateAttributes, ignoreAttributes, lineOffset, gap) {
       const attrName = prop.name;
       const attrValue = prop.value;
       if (!attrValue || !hasChinese(attrValue.content)) return;
-      if (ignoreAttributes && ignoreAttributes.includes(attrName)) return;
-      if (!translateAttributes || !translateAttributes.includes(attrName)) return;
+      if (!gap) {
+        if (ignoreAttributes && ignoreAttributes.includes(attrName)) return;
+        if (!translateAttributes || !translateAttributes.includes(attrName)) return;
+      }
       const line = getLine(prop.loc, lineOffset);
       results.push({
         line,
@@ -60855,7 +60864,7 @@ var require_template_parser = __commonJS({
         context: getSourceLine(element.loc, lineOffset)
       });
     }
-    function handleDirective(prop, element, results, translateAttributes, ignoreAttributes, lineOffset) {
+    function handleDirective(prop, element, results, translateAttributes, ignoreAttributes, lineOffset, gap) {
       const directiveName = prop.name;
       const argName = prop.arg ? prop.arg.content || prop.arg : null;
       let attrName = null;
@@ -60863,8 +60872,10 @@ var require_template_parser = __commonJS({
         attrName = argName;
       }
       if (!attrName) return;
-      if (ignoreAttributes && ignoreAttributes.includes(attrName)) return;
-      if (!translateAttributes || !translateAttributes.includes(attrName)) return;
+      if (!gap) {
+        if (ignoreAttributes && ignoreAttributes.includes(attrName)) return;
+        if (!translateAttributes || !translateAttributes.includes(attrName)) return;
+      }
       if (prop.exp) {
         const expression = getExpressionContent(prop.exp);
         if (expression && hasChinese(expression)) {
@@ -89184,7 +89195,7 @@ var require_script_parser = __commonJS({
     var parser = require_lib();
     var traverse = require_lib8().default;
     var { hasChinese } = require_chinese_detector();
-    function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}) {
+    function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}, gap = false) {
       const results = [];
       const sourceLines = code.split("\n");
       const targetVarNames = Object.keys(scriptTargets);
@@ -89204,6 +89215,7 @@ var require_script_parser = __commonJS({
          * 仅处理变量名命中 scriptTargets 的声明，其他变量内的中文不翻译
          */
         VariableDeclarator(path2) {
+          if (gap) return;
           if (targetVarNames.length === 0) return;
           const varName = getVariableName(path2);
           if (!varName || !targetVarNames.includes(varName)) return;
@@ -89236,6 +89248,7 @@ var require_script_parser = __commonJS({
          * Vue 3 <script setup> 中不存在 ClassProperty，此访问器无副作用
          */
         ClassProperty(path2) {
+          if (gap) return;
           if (targetVarNames.length === 0) return;
           if (!path2.node.key || path2.node.key.type !== "Identifier") return;
           const varName = path2.node.key.name;
@@ -89274,8 +89287,10 @@ var require_script_parser = __commonJS({
           if (isInStringConcat(path2)) return;
           if (path2.parent.type === "ObjectProperty" && path2.parent.key === path2.node) return;
           if (path2.parent.type === "TSLiteralType") return;
-          if (isInVariableDeclarator(path2)) return;
-          if (!isInCallExpression(path2) || !isTranslatableMethodArg(path2, translateMethods)) return;
+          if (!gap) {
+            if (isInVariableDeclarator(path2)) return;
+            if (!isInCallExpression(path2) || !isTranslatableMethodArg(path2, translateMethods)) return;
+          }
           const line = path2.node.loc ? path2.node.loc.start.line + scriptStartLine : scriptStartLine;
           results.push({
             line,
@@ -89288,7 +89303,9 @@ var require_script_parser = __commonJS({
          * 路径2：模板字符串 — 变量声明由 VariableDeclarator 处理，此处只处理 translateMethods
          */
         TemplateLiteral(path2) {
-          if (isInVariableDeclarator(path2)) return;
+          if (!gap) {
+            if (isInVariableDeclarator(path2)) return;
+          }
           const quasis = path2.node.quasis || [];
           const hasInterpolation = path2.node.expressions && path2.node.expressions.length > 0;
           quasis.forEach((quasi) => {
@@ -89305,7 +89322,9 @@ var require_script_parser = __commonJS({
               });
             } else {
               if (isMemberAssignmentTarget(path2)) return;
-              if (!isInCallExpression(path2) || !isTranslatableMethodArg(path2, translateMethods)) return;
+              if (!gap) {
+                if (!isInCallExpression(path2) || !isTranslatableMethodArg(path2, translateMethods)) return;
+              }
               results.push({
                 line,
                 chineseText: text.trim(),
@@ -89320,7 +89339,9 @@ var require_script_parser = __commonJS({
          */
         BinaryExpression(path2) {
           if (path2.node.operator !== "+") return;
-          if (isInVariableDeclarator(path2)) return;
+          if (!gap) {
+            if (isInVariableDeclarator(path2)) return;
+          }
           const left = path2.node.left;
           const right = path2.node.right;
           const hasStringOperand = left.type === "StringLiteral" || right.type === "StringLiteral";
@@ -89739,7 +89760,8 @@ var require_vue_sfc_parser = __commonJS({
     var { parse: parseSFC } = require_compiler_sfc_cjs();
     var { parseTemplate } = require_template_parser();
     var { parseScript } = require_script_parser();
-    function parseVueFile(filePath, source, config) {
+    function parseVueFile(filePath, source, config, options = {}) {
+      const { gap = false } = options;
       const allResults = [];
       const errors = [];
       let sfc;
@@ -89769,7 +89791,8 @@ var require_vue_sfc_parser = __commonJS({
             templateSource,
             config.translateAttributes,
             config.ignoreAttributes,
-            templateStartLine
+            templateStartLine,
+            gap
           );
           templateResults.forEach((r) => {
             r.file = filePath;
@@ -89796,7 +89819,8 @@ var require_vue_sfc_parser = __commonJS({
               scriptSource,
               config.translateMethods,
               scriptStartLine,
-              config.scriptTargets
+              config.scriptTargets,
+              gap
             );
             scriptResults.forEach((r) => {
               r.file = filePath;
@@ -89822,7 +89846,8 @@ var require_scanner = __commonJS({
     var fs2 = require("fs");
     var { parseVueFile } = require_vue_sfc_parser();
     var { parseScript } = require_script_parser();
-    async function scanFiles2(config, projectRoot) {
+    async function scanFiles2(config, projectRoot, options = {}) {
+      const { gap = false } = options;
       const allResults = [];
       const allErrors = [];
       let filesScanned = 0;
@@ -89857,7 +89882,7 @@ var require_scanner = __commonJS({
         }
         const ext = path2.extname(filePath);
         if (ext === ".vue") {
-          const { results, errors } = parseVueFile(filePath, source, config);
+          const { results, errors } = parseVueFile(filePath, source, config, { gap });
           allResults.push(...results);
           errors.forEach((msg) => {
             allErrors.push({ file: filePath, message: msg });
@@ -89868,7 +89893,8 @@ var require_scanner = __commonJS({
               source,
               config.translateMethods || [],
               0,
-              config.scriptTargets || {}
+              config.scriptTargets || {},
+              gap
             );
             scriptResults.forEach((r) => {
               r.file = filePath;
@@ -92582,7 +92608,8 @@ async function runInteractiveFlow() {
   console.log("");
   console.log("\u5168\u6D41\u7A0B\u5B8C\u6210\uFF01\u8BF7\u68C0\u67E5\u4FEE\u6539\u540E\u7684\u6587\u4EF6\uFF0C\u786E\u8BA4\u65E0\u8BEF\u540E\u63D0\u4EA4");
 }
-async function prepareScanResults(config, projectRoot) {
+async function prepareScanResults(config, projectRoot, options = {}) {
+  const { gap = false } = options;
   const outputDir = path.resolve(projectRoot, config.output);
   console.log("\u914D\u7F6E\u52A0\u8F7D\u5B8C\u6210");
   console.log(`  \u8F93\u51FA\u76EE\u5F55: ${outputDir}`);
@@ -92598,7 +92625,8 @@ async function prepareScanResults(config, projectRoot) {
   );
   const { results, errors, filesScanned } = await scanFiles(
     config,
-    projectRoot
+    projectRoot,
+    { gap }
   );
   console.log(`  \u626B\u63CF\u5230 ${filesScanned} \u4E2A\u6587\u4EF6`);
   const matched = [];
@@ -92657,7 +92685,7 @@ async function runScanMode(config, modeOverride) {
     filesScanned,
     errors,
     reverseMap
-  } = await prepareScanResults(config, PROJECT_ROOT);
+  } = await prepareScanResults(config, PROJECT_ROOT, { gap: mode === "gap" });
   if (mode === "dry") {
     printDryRun(fileGroups, matched, unmatched, special, filesScanned, errors);
   } else if (mode === "gap") {

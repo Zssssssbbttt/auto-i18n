@@ -18,9 +18,10 @@ const { hasChinese } = require('../utils/chinese-detector.cjs')
  * @param {number} scriptStartLine - 脚本在 .vue 文件中的起始行号（0-based）
  * @param {object} scriptTargets - 变量名 → 属性名数组映射，如 { columns: ['label'] }
  *        value 为 [] 表示该变量内所有中文都翻译
+ * @param {boolean} gap - 盲区模式：跳过白名单过滤，收集全部中文
  * @returns {object[]} 扫描结果数组
  */
-function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}) {
+function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}, gap = false) {
   const results = []
   const sourceLines = code.split('\n')
   const targetVarNames = Object.keys(scriptTargets)
@@ -44,6 +45,7 @@ function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}
      * 仅处理变量名命中 scriptTargets 的声明，其他变量内的中文不翻译
      */
     VariableDeclarator(path) {
+      if (gap) return // 盲区模式由 StringLiteral/TemplateLiteral 全量收集
       if (targetVarNames.length === 0) return
 
       const varName = getVariableName(path)
@@ -93,6 +95,7 @@ function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}
      * Vue 3 <script setup> 中不存在 ClassProperty，此访问器无副作用
      */
     ClassProperty(path) {
+      if (gap) return
       if (targetVarNames.length === 0) return
 
       if (!path.node.key || path.node.key.type !== 'Identifier') return
@@ -150,11 +153,13 @@ function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}
       // 跳过 TS 类型注解
       if (path.parent.type === 'TSLiteralType') return
 
-      // 变量声明中的字符串由 VariableDeclarator 处理，此处跳过
-      if (isInVariableDeclarator(path)) return
+      if (!gap) {
+        // 变量声明中的字符串由 VariableDeclarator 处理，此处跳过
+        if (isInVariableDeclarator(path)) return
 
-      // 只翻译白名单方法调用参数
-      if (!isInCallExpression(path) || !isTranslatableMethodArg(path, translateMethods)) return
+        // 只翻译白名单方法调用参数
+        if (!isInCallExpression(path) || !isTranslatableMethodArg(path, translateMethods)) return
+      }
 
       const line = path.node.loc
         ? path.node.loc.start.line + scriptStartLine
@@ -172,8 +177,10 @@ function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}
      * 路径2：模板字符串 — 变量声明由 VariableDeclarator 处理，此处只处理 translateMethods
      */
     TemplateLiteral(path) {
-      // 变量声明中的模板字符串由 VariableDeclarator 处理
-      if (isInVariableDeclarator(path)) return
+      if (!gap) {
+        // 变量声明中的模板字符串由 VariableDeclarator 处理
+        if (isInVariableDeclarator(path)) return
+      }
 
       const quasis = path.node.quasis || []
       const hasInterpolation =
@@ -197,7 +204,9 @@ function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}
           })
         } else {
           if (isMemberAssignmentTarget(path)) return
-          if (!isInCallExpression(path) || !isTranslatableMethodArg(path, translateMethods)) return
+          if (!gap) {
+            if (!isInCallExpression(path) || !isTranslatableMethodArg(path, translateMethods)) return
+          }
           results.push({
             line,
             chineseText: text.trim(),
@@ -214,8 +223,10 @@ function parseScript(code, translateMethods, scriptStartLine, scriptTargets = {}
     BinaryExpression(path) {
       if (path.node.operator !== '+') return
 
-      // 变量声明中的拼接由 VariableDeclarator 处理
-      if (isInVariableDeclarator(path)) return
+      if (!gap) {
+        // 变量声明中的拼接由 VariableDeclarator 处理
+        if (isInVariableDeclarator(path)) return
+      }
 
       const left = path.node.left
       const right = path.node.right

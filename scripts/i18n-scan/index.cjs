@@ -454,9 +454,12 @@ async function runInteractiveFlow() {
  * 扫描并分类结果（dry-run / scan / gap 共用）
  * @param {object} config - 配置
  * @param {string} projectRoot - 项目根目录
+ * @param {object} [options] - 扫描选项
+ * @param {boolean} [options.gap] - 盲区模式，跳过白名单/黑名单过滤
  * @returns {Promise<object>} { fileGroups, matched, unmatched, special, results, filesScanned, errors, reverseMap, outputDir }
  */
-async function prepareScanResults(config, projectRoot) {
+async function prepareScanResults(config, projectRoot, options = {}) {
+  const { gap = false } = options;
   const outputDir = path.resolve(projectRoot, config.output);
 
   // 打印配置信息
@@ -478,6 +481,7 @@ async function prepareScanResults(config, projectRoot) {
   const { results, errors, filesScanned } = await scanFiles(
     config,
     projectRoot,
+    { gap },
   );
   console.log(`  扫描到 ${filesScanned} 个文件`);
 
@@ -561,7 +565,7 @@ async function runScanMode(config, modeOverride) {
     filesScanned,
     errors,
     reverseMap,
-  } = await prepareScanResults(config, PROJECT_ROOT);
+  } = await prepareScanResults(config, PROJECT_ROOT, { gap: mode === 'gap' });
 
   if (mode === "dry") {
     printDryRun(fileGroups, matched, unmatched, special, filesScanned, errors);

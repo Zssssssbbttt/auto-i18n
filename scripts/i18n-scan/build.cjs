@@ -25,6 +25,16 @@ const builtinModules = [
   'tty', 'url', 'util', 'v8', 'vm', 'worker_threads', 'zlib',
 ]
 
+// 插件：过滤测试文件，防止被打包
+const excludeTestFilesPlugin = {
+  name: 'exclude-test-files',
+  setup(build) {
+    build.onResolve({ filter: /test-.*\.cjs$/ }, () => {
+      return { external: true }
+    })
+  },
+}
+
 // 插件：node_modules 内部未解析的第三方模块标记为 external
 // @vue/compiler-sfc 内包含 consolidate.js，require 了大量可选模板引擎
 // 这些模块都在 try-catch 里，运行时不会实际调用
@@ -70,7 +80,7 @@ const unresolvedExternalPlugin = {
     minify: false,
     sourcemap: false,
     mainFields: ['main', 'module'],
-    plugins: [unresolvedExternalPlugin],
+    plugins: [excludeTestFilesPlugin, unresolvedExternalPlugin],
     // 允许顶级 require 失败时继续
     banner: {
       js: `// toI18n.cjs — Vue 3 i18n 自动扫描脚本

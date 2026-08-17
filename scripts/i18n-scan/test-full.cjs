@@ -6,8 +6,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const PROJECT_DIR = '/Users/zhousiyu/auto-i18n';
-const TEST_DIR = '/tmp/i18n-test';
+const os = require('os');
+const PROJECT_DIR = path.resolve(__dirname, '../..');
+const TEST_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'i18n-full-test-'));
 const SRC_DIR = path.join(TEST_DIR, 'src');
 
 // 清理 + 重建

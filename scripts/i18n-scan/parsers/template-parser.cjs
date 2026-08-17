@@ -25,13 +25,15 @@ const NODE_TYPE = {
  * @param {string[]} translateAttributes - 需要翻译的属性白名单
  * @param {string[]} ignoreAttributes - 永远不翻译的属性黑名单
  * @param {number} templateStartLine - 模板在 .vue 文件中的起始行号（1-based）
+ * @param {boolean} gap - 盲区模式：跳过白名单与黑名单，输出所有含中文的属性
  * @returns {object[]} 扫描结果数组
  */
 function parseTemplate(
   template,
   translateAttributes,
   ignoreAttributes,
-  templateStartLine
+  templateStartLine,
+  gap = false
 ) {
   const results = []
 
@@ -53,7 +55,8 @@ function parseTemplate(
     results,
     translateAttributes,
     ignoreAttributes,
-    templateStartLine
+    templateStartLine,
+    gap
   )
 
   return results
@@ -67,7 +70,8 @@ function walkNode(
   results,
   translateAttributes,
   ignoreAttributes,
-  lineOffset
+  lineOffset,
+  gap
 ) {
   if (!node) return
 
@@ -80,7 +84,8 @@ function walkNode(
             results,
             translateAttributes,
             ignoreAttributes,
-            lineOffset
+            lineOffset,
+            gap
           )
         )
       }
@@ -92,7 +97,8 @@ function walkNode(
         results,
         translateAttributes,
         ignoreAttributes,
-        lineOffset
+        lineOffset,
+        gap
       )
       break
 
@@ -120,7 +126,8 @@ function walkNode(
             results,
             translateAttributes,
             ignoreAttributes,
-            lineOffset
+            lineOffset,
+            gap
           )
         )
       }
@@ -136,7 +143,8 @@ function walkElement(
   results,
   translateAttributes,
   ignoreAttributes,
-  lineOffset
+  lineOffset,
+  gap
 ) {
   // 处理属性
   if (node.props) {
@@ -149,7 +157,8 @@ function walkElement(
           results,
           translateAttributes,
           ignoreAttributes,
-          lineOffset
+          lineOffset,
+          gap
         )
       } else if (prop.type === NODE_TYPE.DIRECTIVE) {
         // 指令：v-bind:label / :label / v-if / @click 等
@@ -159,7 +168,8 @@ function walkElement(
           results,
           translateAttributes,
           ignoreAttributes,
-          lineOffset
+          lineOffset,
+          gap
         )
       }
     })
@@ -173,7 +183,8 @@ function walkElement(
         results,
         translateAttributes,
         ignoreAttributes,
-        lineOffset
+        lineOffset,
+        gap
       )
     )
   }
@@ -189,7 +200,8 @@ function handleStaticAttribute(
   results,
   translateAttributes,
   ignoreAttributes,
-  lineOffset
+  lineOffset,
+  gap
 ) {
   const attrName = prop.name
   const attrValue = prop.value
@@ -197,11 +209,13 @@ function handleStaticAttribute(
   // 检查属性值是否包含中文
   if (!attrValue || !hasChinese(attrValue.content)) return
 
-  // 黑名单优先
-  if (ignoreAttributes && ignoreAttributes.includes(attrName)) return
+  if (!gap) {
+    // 黑名单优先
+    if (ignoreAttributes && ignoreAttributes.includes(attrName)) return
 
-  // 检查是否在白名单中
-  if (!translateAttributes || !translateAttributes.includes(attrName)) return
+    // 检查是否在白名单中
+    if (!translateAttributes || !translateAttributes.includes(attrName)) return
+  }
 
   // 获取行号
   const line = getLine(prop.loc, lineOffset)
@@ -226,7 +240,8 @@ function handleDirective(
   results,
   translateAttributes,
   ignoreAttributes,
-  lineOffset
+  lineOffset,
+  gap
 ) {
   // 获取指令名和参数名
   // v-bind:label → name='bind', arg='label'
@@ -243,11 +258,13 @@ function handleDirective(
   // 如果无法确定属性名，跳过
   if (!attrName) return
 
-  // 黑名单优先
-  if (ignoreAttributes && ignoreAttributes.includes(attrName)) return
+  if (!gap) {
+    // 黑名单优先
+    if (ignoreAttributes && ignoreAttributes.includes(attrName)) return
 
-  // 检查是否在白名单中
-  if (!translateAttributes || !translateAttributes.includes(attrName)) return
+    // 检查是否在白名单中
+    if (!translateAttributes || !translateAttributes.includes(attrName)) return
+  }
 
   // 解析表达式中的中文
   if (prop.exp) {

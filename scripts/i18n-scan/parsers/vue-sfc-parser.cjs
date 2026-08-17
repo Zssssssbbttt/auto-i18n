@@ -16,9 +16,12 @@ const { parseScript } = require('./script-parser.cjs')
  * @param {string[]} config.translateAttributes - 属性白名单
  * @param {string[]} config.ignoreAttributes - 属性黑名单
  * @param {string[]} config.translateMethods - 方法白名单
+ * @param {object} [options] - 扫描选项
+ * @param {boolean} [options.gap] - 盲区模式，跳过白名单/黑名单过滤
  * @returns {{ results: object[], errors: string[] }}
  */
-function parseVueFile(filePath, source, config) {
+function parseVueFile(filePath, source, config, options = {}) {
+  const { gap = false } = options;
   const allResults = []
   const errors = []
 
@@ -56,7 +59,8 @@ function parseVueFile(filePath, source, config) {
         templateSource,
         config.translateAttributes,
         config.ignoreAttributes,
-        templateStartLine
+        templateStartLine,
+        gap
       )
       // 标记来源
       templateResults.forEach((r) => {
@@ -90,7 +94,8 @@ function parseVueFile(filePath, source, config) {
           scriptSource,
           config.translateMethods,
           scriptStartLine,
-          config.scriptTargets
+          config.scriptTargets,
+          gap
         )
         scriptResults.forEach((r) => {
           r.file = filePath
